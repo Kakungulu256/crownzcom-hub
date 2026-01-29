@@ -59,19 +59,19 @@ export function RecentTransactions() {
           {transactions.map((transaction) => (
             <div
               key={transaction.id}
-              className="flex items-center justify-between p-3 border-2 border-border hover:bg-accent/50 transition-colors"
+              className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors"
             >
               <div className="flex items-center gap-3">
                 <div
                   className={cn(
-                    "flex h-10 w-10 items-center justify-center border-2 border-foreground",
-                    transaction.type === "deposit" ? "bg-chart-2/20" : "bg-chart-1/20"
+                    "flex h-10 w-10 items-center justify-center rounded-full",
+                    transaction.type === "deposit" ? "bg-success/20" : "bg-destructive/20"
                   )}
                 >
                   {transaction.type === "deposit" ? (
-                    <ArrowDownLeft className="h-5 w-5 text-chart-2" />
+                    <ArrowDownLeft className="h-5 w-5 text-success" />
                   ) : (
-                    <ArrowUpRight className="h-5 w-5 text-chart-1" />
+                    <ArrowUpRight className="h-5 w-5 text-destructive" />
                   )}
                 </div>
                 <div>
@@ -83,7 +83,7 @@ export function RecentTransactions() {
                 <span
                   className={cn(
                     "font-mono font-semibold",
-                    transaction.type === "deposit" ? "text-chart-2" : "text-chart-1"
+                    transaction.type === "deposit" ? "text-success" : "text-destructive"
                   )}
                 >
                   {transaction.type === "deposit" ? "+" : "-"}KES{" "}

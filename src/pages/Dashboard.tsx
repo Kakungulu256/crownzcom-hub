@@ -11,9 +11,9 @@ const Dashboard = () => {
     <AppLayout title="Dashboard">
       <div className="space-y-6">
         {/* Welcome Section */}
-        <div className="border-2 border-foreground p-6 bg-secondary">
+        <div className="rounded-lg p-6 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,45%)] text-white">
           <h2 className="text-2xl font-bold tracking-tight">Welcome back, John!</h2>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-white/80 mt-1">
             Here's an overview of your investment club activity.
           </p>
         </div>

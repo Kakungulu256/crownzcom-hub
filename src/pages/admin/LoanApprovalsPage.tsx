@@ -47,14 +47,14 @@ const LoanApprovalsPage = () => {
         </Card>
 
         <Tabs defaultValue="pending" className="space-y-6">
-          <TabsList className="border-2 border-foreground p-0 h-auto bg-transparent">
-            <TabsTrigger value="pending" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
+          <TabsList className="rounded-lg border border-border p-1 h-auto bg-secondary">
+            <TabsTrigger value="pending" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
               Pending Approvals (3)
             </TabsTrigger>
-            <TabsTrigger value="active" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
+            <TabsTrigger value="active" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
               Active Loans (3)
             </TabsTrigger>
-            <TabsTrigger value="history" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
+            <TabsTrigger value="history" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
               History
             </TabsTrigger>
           </TabsList>
@@ -79,21 +79,21 @@ const LoanApprovalsPage = () => {
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="border-2 border-border p-3">
+                        <div className="rounded-lg border border-border p-3">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Amount</p>
                           <p className="font-mono font-bold text-lg">KES {loan.amount.toLocaleString()}</p>
                         </div>
-                        <div className="border-2 border-border p-3">
+                        <div className="rounded-lg border border-border p-3">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Term</p>
                           <p className="font-mono font-bold text-lg">{loan.term}</p>
                         </div>
-                        <div className="border-2 border-border p-3">
+                        <div className="rounded-lg border border-border p-3">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Interest</p>
                           <p className="font-mono font-bold text-lg">{loan.interest}% p.a.</p>
                         </div>
-                        <div className="border-2 border-border p-3">
+                        <div className="rounded-lg border border-border p-3">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Savings Ratio</p>
-                          <p className={`font-mono font-bold text-lg ${loan.savingsRatio > 0.5 ? "text-chart-1" : "text-chart-2"}`}>
+                          <p className={`font-mono font-bold text-lg ${loan.savingsRatio > 0.5 ? "text-destructive" : "text-success"}`}>
                             {(loan.savingsRatio * 100).toFixed(0)}%
                           </p>
                         </div>
@@ -132,17 +132,17 @@ const LoanApprovalsPage = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="border-2 border-border">
+                <div className="rounded-lg border border-border overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow className="border-b-2 border-border hover:bg-transparent">
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs">Member</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs">Purpose</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Principal</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Balance</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs">Next Due</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs">Status</TableHead>
-                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Actions</TableHead>
+                      <TableRow className="bg-primary hover:bg-primary">
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Purpose</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Principal</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Balance</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Next Due</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Status</TableHead>
+                        <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

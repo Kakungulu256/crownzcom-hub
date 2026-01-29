@@ -28,7 +28,7 @@ const Statements = () => {
             <div className="flex flex-col md:flex-row gap-4 items-end">
               <div className="flex-1 space-y-2">
                 <label className="text-sm font-medium uppercase tracking-wider">From Date</label>
-                <div className="flex items-center border-2 border-border bg-background">
+                <div className="flex items-center rounded-md border border-border bg-background">
                   <Calendar className="h-4 w-4 mx-3 text-muted-foreground" />
                   <input 
                     type="date" 
@@ -39,7 +39,7 @@ const Statements = () => {
               </div>
               <div className="flex-1 space-y-2">
                 <label className="text-sm font-medium uppercase tracking-wider">To Date</label>
-                <div className="flex items-center border-2 border-border bg-background">
+                <div className="flex items-center rounded-md border border-border bg-background">
                   <Calendar className="h-4 w-4 mx-3 text-muted-foreground" />
                   <input 
                     type="date" 
@@ -68,10 +68,10 @@ const Statements = () => {
               {statements.map((statement) => (
                 <div
                   key={statement.id}
-                  className="flex items-center justify-between p-4 border-2 border-border hover:bg-accent/50 transition-colors"
+                  className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-accent/50 transition-colors"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center border-2 border-foreground bg-secondary">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <FileText className="h-6 w-6" />
                     </div>
                     <div>

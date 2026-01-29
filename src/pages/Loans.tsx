@@ -89,7 +89,7 @@ const Loans = () => {
           <CardContent>
             <div className="space-y-4">
               {activeLoans.map((loan) => (
-                <div key={loan.id} className="border-2 border-border p-4 space-y-4">
+                <div key={loan.id} className="rounded-lg border border-border p-4 space-y-4 bg-card">
                   <div className="flex items-start justify-between">
                     <div>
                       <h4 className="font-semibold">{loan.purpose}</h4>
@@ -108,9 +108,9 @@ const Loans = () => {
                       <span>Repayment Progress</span>
                       <span className="font-mono font-semibold">{loan.progress}%</span>
                     </div>
-                    <div className="h-3 border-2 border-foreground bg-secondary relative overflow-hidden">
+                    <div className="h-3 rounded-full bg-secondary relative overflow-hidden">
                       <div 
-                        className="absolute inset-y-0 left-0 bg-chart-2 transition-all"
+                        className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all"
                         style={{ width: `${loan.progress}%` }}
                       />
                     </div>
@@ -149,14 +149,14 @@ const Loans = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="border-2 border-border">
+            <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b-2 border-border hover:bg-transparent">
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Date</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Description</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Type</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Amount</TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Date</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Description</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Type</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -169,7 +169,7 @@ const Loans = () => {
                           {record.type}
                         </Badge>
                       </TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${record.type === "payment" ? "text-chart-2" : "text-foreground"}`}>
+                      <TableCell className={`text-right font-mono font-semibold ${record.type === "payment" ? "text-success" : "text-foreground"}`}>
                         {record.type === "payment" ? "-" : "+"}KES {record.amount.toLocaleString()}
                       </TableCell>
                     </TableRow>

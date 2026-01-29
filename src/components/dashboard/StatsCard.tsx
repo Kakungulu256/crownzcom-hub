@@ -32,7 +32,7 @@ export function StatsCard({
               <p
                 className={cn(
                   "text-sm font-medium",
-                  changeType === "positive" && "text-chart-2",
+                  changeType === "positive" && "text-success",
                   changeType === "negative" && "text-destructive",
                   changeType === "neutral" && "text-muted-foreground"
                 )}
@@ -41,7 +41,7 @@ export function StatsCard({
               </p>
             )}
           </div>
-          <div className="flex h-12 w-12 items-center justify-center border-2 border-foreground bg-secondary">
+          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Icon className="h-6 w-6" />
           </div>
         </div>

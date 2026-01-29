@@ -57,16 +57,16 @@ const Transactions = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="border-2 border-border">
+            <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b-2 border-border hover:bg-transparent">
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs w-12"></TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Date</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Description</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Category</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Reference</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Amount</TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs w-12 text-primary-foreground"></TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Date</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Description</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Category</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Reference</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -75,14 +75,14 @@ const Transactions = () => {
                       <TableCell>
                         <div
                           className={cn(
-                            "flex h-8 w-8 items-center justify-center border-2 border-foreground",
-                            tx.type === "deposit" ? "bg-chart-2/20" : "bg-chart-1/20"
+                            "flex h-8 w-8 items-center justify-center rounded-full",
+                            tx.type === "deposit" ? "bg-success/20" : "bg-destructive/20"
                           )}
                         >
                           {tx.type === "deposit" ? (
-                            <ArrowDownLeft className="h-4 w-4 text-chart-2" />
+                            <ArrowDownLeft className="h-4 w-4 text-success" />
                           ) : (
-                            <ArrowUpRight className="h-4 w-4 text-chart-1" />
+                            <ArrowUpRight className="h-4 w-4 text-destructive" />
                           )}
                         </div>
                       </TableCell>
@@ -96,7 +96,7 @@ const Transactions = () => {
                       <TableCell className="font-mono text-xs text-muted-foreground">{tx.reference}</TableCell>
                       <TableCell className={cn(
                         "text-right font-mono font-semibold",
-                        tx.type === "deposit" ? "text-chart-2" : "text-chart-1"
+                        tx.type === "deposit" ? "text-success" : "text-destructive"
                       )}>
                         {tx.type === "deposit" ? "+" : "-"}KES {tx.amount.toLocaleString()}
                       </TableCell>
