@@ -3,6 +3,10 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import Login from "@/pages/Login";
+import AuthCallback from "@/pages/AuthCallback";
 import Dashboard from "./pages/Dashboard";
 import Savings from "./pages/Savings";
 import Loans from "./pages/Loans";
@@ -20,31 +24,37 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          {/* Member Routes */}
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/savings" element={<Savings />} />
-          <Route path="/loans" element={<Loans />} />
-          <Route path="/transactions" element={<Transactions />} />
-          <Route path="/statements" element={<Statements />} />
-          
-          {/* Admin Routes */}
-          <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/admin/members" element={<MembersPage />} />
-          <Route path="/admin/loans" element={<LoanApprovalsPage />} />
-          <Route path="/admin/interest" element={<InterestPage />} />
-          <Route path="/admin/reports" element={<ReportsPage />} />
-          <Route path="/admin/settings" element={<SettingsPage />} />
-          
-          {/* Catch-all */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+    <AuthProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            {/* Auth Routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            
+            {/* Member Routes */}
+            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/savings" element={<ProtectedRoute><Savings /></ProtectedRoute>} />
+            <Route path="/loans" element={<ProtectedRoute><Loans /></ProtectedRoute>} />
+            <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
+            <Route path="/statements" element={<ProtectedRoute><Statements /></ProtectedRoute>} />
+            
+            {/* Admin Routes */}
+            <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/admin/members" element={<ProtectedRoute requireAdmin><MembersPage /></ProtectedRoute>} />
+            <Route path="/admin/loans" element={<ProtectedRoute requireAdmin><LoanApprovalsPage /></ProtectedRoute>} />
+            <Route path="/admin/interest" element={<ProtectedRoute requireAdmin><InterestPage /></ProtectedRoute>} />
+            <Route path="/admin/reports" element={<ProtectedRoute requireAdmin><ReportsPage /></ProtectedRoute>} />
+            <Route path="/admin/settings" element={<ProtectedRoute requireAdmin><SettingsPage /></ProtectedRoute>} />
+            
+            {/* Catch-all */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

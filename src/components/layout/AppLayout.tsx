@@ -1,9 +1,10 @@
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { Separator } from "@/components/ui/separator";
-import { Bell, Search } from "lucide-react";
+import { Bell, Search, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -11,6 +12,15 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, title }: AppLayoutProps) {
+  const { logout, user } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full">
@@ -33,6 +43,15 @@ export function AppLayout({ children, title }: AppLayoutProps) {
                 <span className="absolute -top-1 -right-1 h-4 w-4 bg-accent text-accent-foreground text-xs flex items-center justify-center rounded-full">
                   3
                 </span>
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-9 w-9 text-white hover:bg-white/10"
+                onClick={handleLogout}
+                title={`Logout ${user?.email || ''}`}
+              >
+                <LogOut className="h-4 w-4" />
               </Button>
             </div>
           </header>
