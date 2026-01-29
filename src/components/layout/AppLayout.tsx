@@ -16,21 +16,21 @@ export function AppLayout({ children, title }: AppLayoutProps) {
       <div className="flex min-h-screen w-full">
         <AppSidebar />
         <SidebarInset className="flex flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b-2 border-border px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
+          <header className="flex h-14 shrink-0 items-center gap-2 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,40%)] px-4 text-white">
+            <SidebarTrigger className="-ml-1 text-white hover:bg-white/10" />
+            <Separator orientation="vertical" className="mr-2 h-4 bg-white/30" />
             {title && <h1 className="font-semibold text-lg">{title}</h1>}
             <div className="ml-auto flex items-center gap-2">
               <div className="relative hidden md:block">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" />
                 <Input
-                  placeholder="Search..."
-                  className="w-64 pl-9 h-9 border-2"
+                  placeholder="Search here"
+                  className="w-64 pl-9 h-9 bg-white/10 border-white/20 text-white placeholder:text-white/60 focus:bg-white/20"
                 />
               </div>
-              <Button variant="outline" size="icon" className="h-9 w-9 relative">
+              <Button variant="ghost" size="icon" className="h-9 w-9 relative text-white hover:bg-white/10">
                 <Bell className="h-4 w-4" />
-                <span className="absolute -top-1 -right-1 h-4 w-4 bg-destructive text-destructive-foreground text-xs flex items-center justify-center border border-background">
+                <span className="absolute -top-1 -right-1 h-4 w-4 bg-accent text-accent-foreground text-xs flex items-center justify-center rounded-full">
                   3
                 </span>
               </Button>
