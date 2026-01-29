@@ -65,16 +65,16 @@ export function AppSidebar() {
   const isActive = (path: string) => currentPath === path;
 
   return (
-    <Sidebar collapsible="icon" className="border-r-2 border-border">
-      <SidebarHeader className="border-b-2 border-border p-4">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      <SidebarHeader className="border-b border-sidebar-border p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center border-2 border-foreground bg-primary text-primary-foreground font-bold text-lg">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-primary-foreground font-bold text-lg">
             C
           </div>
           {!collapsed && (
             <div className="flex flex-col">
-              <span className="font-bold text-lg tracking-tight">Crownzcom</span>
-              <span className="text-xs text-muted-foreground uppercase tracking-widest">Investment Club</span>
+              <span className="font-bold text-lg tracking-tight text-sidebar-foreground">Crownzcom</span>
+              <span className="text-xs text-sidebar-foreground/70 uppercase tracking-widest">Investment Club</span>
             </div>
           )}
         </div>
@@ -139,19 +139,19 @@ export function AppSidebar() {
         </Collapsible>
       </SidebarContent>
 
-      <SidebarFooter className="border-t-2 border-border p-4">
+      <SidebarFooter className="border-t border-sidebar-border p-4">
         <div className="flex items-center gap-3">
-          <Avatar className="h-9 w-9 border-2 border-foreground">
-            <AvatarFallback className="bg-secondary font-semibold">JD</AvatarFallback>
+          <Avatar className="h-9 w-9 border-2 border-primary">
+            <AvatarFallback className="bg-primary/20 text-sidebar-foreground font-semibold">JD</AvatarFallback>
           </Avatar>
           {!collapsed && (
             <div className="flex flex-1 flex-col">
-              <span className="text-sm font-medium">John Doe</span>
-              <span className="text-xs text-muted-foreground">Member</span>
+              <span className="text-sm font-medium text-sidebar-foreground">John Doe</span>
+              <span className="text-xs text-sidebar-foreground/70">Member</span>
             </div>
           )}
           {!collapsed && (
-            <Button variant="ghost" size="icon" className="h-8 w-8">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground hover:bg-sidebar-accent">
               <LogOut className="h-4 w-4" />
             </Button>
           )}
