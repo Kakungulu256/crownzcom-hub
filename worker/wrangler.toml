@@ -1,0 +1,25 @@
+name = "crownzcom-auth"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Default database configuration
+[[d1_databases]]
+binding = "DB"
+database_name = "crownzcom-db"
+database_id = "34401a4b-cf27-4b10-84d8-978224f5cdaf"
+
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "crownzcom-db"
+database_id = "34401a4b-cf27-4b10-84d8-978224f5cdaf"
+
+[env.development]
+vars = { ENVIRONMENT = "development" }
+
+[[env.development.d1_databases]]
+binding = "DB"
+database_name = "crownzcom-db"
+database_id = "34401a4b-cf27-4b10-84d8-978224f5cdaf"

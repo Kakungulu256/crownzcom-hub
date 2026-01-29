@@ -1,13 +1,13 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { account, databases, DATABASE_ID, ALLOWED_EMAILS_COLLECTION_ID } from '@/lib/appwrite';
-import { Models } from 'appwrite';
+import { authService, User } from '@/lib/auth';
 
 interface AuthContextType {
-  user: Models.User<Models.Preferences> | null;
+  user: User | null;
   isAdmin: boolean;
   loading: boolean;
-  login: () => Promise<void>;
-  logout: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
+  logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -20,60 +20,35 @@ export const useAuth = () => {
   return context;
 };
 
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export const AuthProvider = ({ children }: AuthProviderProps) => {
-  const [user, setUser] = useState<Models.User<Models.Preferences> | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const checkIfAdmin = async (email: string) => {
-    try {
-      const response = await databases.listDocuments(
-        DATABASE_ID,
-        ALLOWED_EMAILS_COLLECTION_ID
-      );
-      return response.documents.some((doc: any) => doc.email === email && doc.isAdmin);
-    } catch (error) {
-      console.error('Error checking admin status:', error);
-      return false;
-    }
-  };
 
   const checkAuth = async () => {
     try {
-      const currentUser = await account.get();
+      const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
-      const adminStatus = await checkIfAdmin(currentUser.email);
-      setIsAdmin(adminStatus);
     } catch (error) {
+      console.error('Auth check failed:', error);
       setUser(null);
-      setIsAdmin(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async () => {
-    try {
-      await account.createOAuth2Session('google', `${window.location.origin}/auth/callback`);
-    } catch (error) {
-      console.error('Login error:', error);
-      throw error;
-    }
+  const login = async (email: string, password: string) => {
+    const { user } = await authService.login(email, password);
+    setUser(user);
   };
 
-  const logout = async () => {
-    try {
-      await account.deleteSession('current');
-      setUser(null);
-      setIsAdmin(false);
-    } catch (error) {
-      console.error('Logout error:', error);
-      throw error;
-    }
+  const register = async (name: string, email: string, password: string) => {
+    const { user } = await authService.register(name, email, password);
+    setUser(user);
+  };
+
+  const logout = () => {
+    authService.logout();
+    setUser(null);
   };
 
   useEffect(() => {
@@ -81,7 +56,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loading, login, logout }}>
+    <AuthContext.Provider value={{
+      user,
+      isAdmin: user?.role === 'admin',
+      loading,
+      login,
+      register,
+      logout
+    }}>
       {children}
     </AuthContext.Provider>
   );
