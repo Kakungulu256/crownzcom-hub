@@ -47,24 +47,24 @@ export function LoanRepaymentChart() {
               <Tooltip
                 contentStyle={{
                   background: "hsl(var(--card))",
-                  border: "2px solid hsl(var(--border))",
-                  boxShadow: "var(--shadow-sm)",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "0.5rem",
                 }}
                 formatter={(value: number) => [`KES ${value.toLocaleString()}`, ""]}
                 labelStyle={{ fontWeight: 600 }}
               />
-              <Bar dataKey="repaid" name="Repaid" stackId="a" fill="hsl(var(--chart-2))" />
-              <Bar dataKey="outstanding" name="Outstanding" stackId="a" fill="hsl(var(--chart-1))" />
+              <Bar dataKey="repaid" name="Repaid" stackId="a" fill="hsl(var(--success))" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="outstanding" name="Outstanding" stackId="a" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
         <div className="flex items-center justify-center gap-6 mt-4">
           <div className="flex items-center gap-2">
-            <div className="h-3 w-3 bg-chart-2" />
+            <div className="h-3 w-3 rounded bg-success" />
             <span className="text-sm text-muted-foreground">Repaid</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-3 w-3 bg-chart-1" />
+            <div className="h-3 w-3 rounded bg-chart-2" />
             <span className="text-sm text-muted-foreground">Outstanding</span>
           </div>
         </div>

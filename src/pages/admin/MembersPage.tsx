@@ -39,7 +39,7 @@ const MembersPage = () => {
                 <Filter className="h-4 w-4 mr-2" />
                 Filter
               </Button>
-              <Button>
+              <Button variant="accent">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Member
               </Button>
@@ -55,17 +55,17 @@ const MembersPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="border-2 border-border">
+            <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b-2 border-border hover:bg-transparent">
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Member</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Contact</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Savings</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Loans</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Status</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Joined</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs w-12"></TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Contact</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Savings</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Loans</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Status</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Joined</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs w-12 text-primary-foreground"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -73,8 +73,8 @@ const MembersPage = () => {
                     <TableRow key={member.id} className="border-b border-border">
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-9 w-9 border-2 border-foreground">
-                            <AvatarFallback className="bg-secondary font-semibold text-sm">
+                          <Avatar className="h-9 w-9 border-2 border-primary">
+                            <AvatarFallback className="bg-primary/20 font-semibold text-sm">
                               {member.name.split(" ").map(n => n[0]).join("")}
                             </AvatarFallback>
                           </Avatar>
@@ -93,12 +93,12 @@ const MembersPage = () => {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-chart-2">
+                      <TableCell className="text-right font-mono font-semibold text-success">
                         KES {member.savings.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right font-mono">
                         {member.loans > 0 ? (
-                          <span className="text-chart-1 font-semibold">KES {member.loans.toLocaleString()}</span>
+                          <span className="text-destructive font-semibold">KES {member.loans.toLocaleString()}</span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}

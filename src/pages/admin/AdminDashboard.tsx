@@ -187,16 +187,16 @@ const AdminDashboard = () => {
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="border-2 border-border">
+            <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b-2 border-border hover:bg-transparent">
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Member</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Purpose</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Amount</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Risk</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Date</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Actions</TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Purpose</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Amount</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Risk</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Date</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

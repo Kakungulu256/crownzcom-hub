@@ -66,9 +66,9 @@ const Savings = () => {
                 <span>Current: <strong className="font-mono">KES 175,000</strong></span>
                 <span>Target: <strong className="font-mono">KES 200,000</strong></span>
               </div>
-              <div className="h-4 border-2 border-foreground bg-secondary relative overflow-hidden">
+              <div className="h-4 rounded-full bg-secondary relative overflow-hidden">
                 <div 
-                  className="absolute inset-y-0 left-0 bg-chart-2 transition-all"
+                  className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all"
                   style={{ width: "87.5%" }}
                 />
               </div>
@@ -101,14 +101,14 @@ const Savings = () => {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="border-2 border-border">
+            <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b-2 border-border hover:bg-transparent">
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Date</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs">Description</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Amount</TableHead>
-                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right">Balance</TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Date</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Description</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Amount</TableHead>
+                    <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Balance</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -116,7 +116,7 @@ const Savings = () => {
                     <TableRow key={record.id} className="border-b border-border">
                       <TableCell className="font-mono text-sm">{record.date}</TableCell>
                       <TableCell className="text-sm">{record.description}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${record.type === "credit" ? "text-chart-2" : "text-chart-1"}`}>
+                      <TableCell className={`text-right font-mono font-semibold ${record.type === "credit" ? "text-success" : "text-destructive"}`}>
                         {record.type === "credit" ? "+" : "-"}KES {record.amount.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right font-mono">
