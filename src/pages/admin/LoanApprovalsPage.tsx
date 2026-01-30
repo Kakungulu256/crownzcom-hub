@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Search, Filter, CheckCircle, XCircle, Eye, Clock } from "lucide-react";
+import { Search, Filter, CheckCircle, XCircle, Eye, Clock, FileCheck, AlertTriangle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const pendingLoans = [
@@ -30,13 +30,35 @@ const LoanApprovalsPage = () => {
   return (
     <AppLayout title="Loan Management">
       <div className="space-y-6">
+        {/* Page Header */}
+        <div className="rounded-lg p-6 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,45%)] text-white">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Loan Management</h2>
+              <p className="text-white/80 mt-1">
+                Review, approve, and manage member loans
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm text-center">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Pending</p>
+                <p className="font-mono font-bold text-xl">{pendingLoans.length}</p>
+              </div>
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm text-center">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Active</p>
+                <p className="font-mono font-bold text-xl">{activeLoans.length}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Search */}
         <Card>
           <CardContent className="pt-6">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input placeholder="Search loans..." className="pl-9" />
+                <Input placeholder="Search loans by member or purpose..." className="pl-9" />
               </div>
               <Button variant="outline">
                 <Filter className="h-4 w-4 mr-2" />
@@ -47,21 +69,24 @@ const LoanApprovalsPage = () => {
         </Card>
 
         <Tabs defaultValue="pending" className="space-y-6">
-          <TabsList className="rounded-lg border border-border p-1 h-auto bg-secondary">
-            <TabsTrigger value="pending" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
-              Pending Approvals (3)
+          <TabsList className="rounded-lg border border-border p-1 h-auto bg-secondary/50">
+            <TabsTrigger value="pending" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2.5">
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              Pending Approvals ({pendingLoans.length})
             </TabsTrigger>
-            <TabsTrigger value="active" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
-              Active Loans (3)
+            <TabsTrigger value="active" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2.5">
+              <FileCheck className="h-4 w-4 mr-2" />
+              Active Loans ({activeLoans.length})
             </TabsTrigger>
-            <TabsTrigger value="history" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2">
+            <TabsTrigger value="history" className="rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-6 py-2.5">
+              <Clock className="h-4 w-4 mr-2" />
               History
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="pending" className="space-y-4">
             {pendingLoans.map((loan) => (
-              <Card key={loan.id}>
+              <Card key={loan.id} className="overflow-hidden hover:shadow-md transition-shadow">
                 <CardContent className="pt-6">
                   <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
                     <div className="space-y-4 flex-1">
@@ -71,27 +96,31 @@ const LoanApprovalsPage = () => {
                           <p className="text-muted-foreground">{loan.purpose}</p>
                         </div>
                         <Badge
-                          variant={loan.risk === "low" ? "default" : "secondary"}
-                          className="uppercase tracking-wider"
+                          variant="outline"
+                          className={`uppercase tracking-wider ${
+                            loan.risk === "low" 
+                              ? "bg-success/10 text-success border-success/30" 
+                              : "bg-warning/10 text-warning border-warning/30"
+                          }`}
                         >
                           {loan.risk} risk
                         </Badge>
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="rounded-lg border border-border p-3">
+                        <div className="rounded-lg border border-border p-3 bg-muted/30">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Amount</p>
                           <p className="font-mono font-bold text-lg">KES {loan.amount.toLocaleString()}</p>
                         </div>
-                        <div className="rounded-lg border border-border p-3">
+                        <div className="rounded-lg border border-border p-3 bg-muted/30">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Term</p>
                           <p className="font-mono font-bold text-lg">{loan.term}</p>
                         </div>
-                        <div className="rounded-lg border border-border p-3">
+                        <div className="rounded-lg border border-border p-3 bg-muted/30">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Interest</p>
                           <p className="font-mono font-bold text-lg">{loan.interest}% p.a.</p>
                         </div>
-                        <div className="rounded-lg border border-border p-3">
+                        <div className="rounded-lg border border-border p-3 bg-muted/30">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider">Savings Ratio</p>
                           <p className={`font-mono font-bold text-lg ${loan.savingsRatio > 0.5 ? "text-destructive" : "text-success"}`}>
                             {(loan.savingsRatio * 100).toFixed(0)}%
@@ -100,12 +129,12 @@ const LoanApprovalsPage = () => {
                       </div>
 
                       <p className="text-sm text-muted-foreground">
-                        Applied: <span className="font-mono">{loan.date}</span>
+                        Applied: <span className="font-mono font-medium">{loan.date}</span>
                       </p>
                     </div>
 
                     <div className="flex flex-row lg:flex-col gap-2 lg:w-36">
-                      <Button variant="success" className="flex-1">
+                      <Button className="flex-1 bg-success hover:bg-success/90">
                         <CheckCircle className="h-4 w-4 mr-2" />
                         Approve
                       </Button>
@@ -126,16 +155,22 @@ const LoanApprovalsPage = () => {
 
           <TabsContent value="active">
             <Card>
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-semibold uppercase tracking-wider">
-                  Active Loans
-                </CardTitle>
+              <CardHeader className="pb-4 flex flex-row items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <FileCheck className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg font-semibold">
+                    Active Loans
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">Currently outstanding loans</p>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="rounded-lg border border-border overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
+                      <TableRow className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary hover:to-primary/80">
                         <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
                         <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Purpose</TableHead>
                         <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Principal</TableHead>
@@ -147,7 +182,7 @@ const LoanApprovalsPage = () => {
                     </TableHeader>
                     <TableBody>
                       {activeLoans.map((loan) => (
-                        <TableRow key={loan.id} className="border-b border-border">
+                        <TableRow key={loan.id} className="border-b border-border hover:bg-muted/50">
                           <TableCell className="font-medium">{loan.member}</TableCell>
                           <TableCell>{loan.purpose}</TableCell>
                           <TableCell className="text-right font-mono">KES {loan.amount.toLocaleString()}</TableCell>
@@ -155,8 +190,12 @@ const LoanApprovalsPage = () => {
                           <TableCell className="font-mono text-sm">{loan.nextDue}</TableCell>
                           <TableCell>
                             <Badge
-                              variant={loan.status === "current" ? "default" : "destructive"}
-                              className="uppercase text-xs tracking-wider"
+                              variant="outline"
+                              className={`uppercase text-xs tracking-wider ${
+                                loan.status === "current" 
+                                  ? "bg-success/10 text-success border-success/30" 
+                                  : "bg-destructive/10 text-destructive border-destructive/30"
+                              }`}
                             >
                               {loan.status}
                             </Badge>
@@ -177,10 +216,12 @@ const LoanApprovalsPage = () => {
 
           <TabsContent value="history">
             <Card>
-              <CardContent className="py-12 text-center">
-                <Clock className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold">Loan History</h3>
-                <p className="text-muted-foreground">Historical loan records will appear here.</p>
+              <CardContent className="py-16 text-center">
+                <div className="h-16 w-16 mx-auto rounded-full bg-muted flex items-center justify-center mb-4">
+                  <Clock className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2">Loan History</h3>
+                <p className="text-muted-foreground max-w-sm mx-auto">Historical loan records and completed loans will appear here.</p>
               </CardContent>
             </Card>
           </TabsContent>

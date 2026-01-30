@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowDownLeft, ArrowUpRight, Download, Filter, Search } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Download, Filter, Search, Activity } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -26,9 +26,34 @@ const transactions = [
 ];
 
 const Transactions = () => {
+  const totalDeposits = transactions.filter(t => t.type === "deposit").reduce((sum, t) => sum + t.amount, 0);
+  const totalWithdrawals = transactions.filter(t => t.type === "withdrawal").reduce((sum, t) => sum + t.amount, 0);
+
   return (
     <AppLayout title="Transactions">
       <div className="space-y-6">
+        {/* Page Header */}
+        <div className="rounded-lg p-6 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,45%)] text-white">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Transaction History</h2>
+              <p className="text-white/80 mt-1">
+                View and manage all your financial transactions
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Total In</p>
+                <p className="font-mono font-bold text-success">+KES {totalDeposits.toLocaleString()}</p>
+              </div>
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Total Out</p>
+                <p className="font-mono font-bold text-destructive">-KES {totalWithdrawals.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Filters */}
         <Card>
           <CardContent className="pt-6">
@@ -51,16 +76,22 @@ const Transactions = () => {
 
         {/* Transactions Table */}
         <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold uppercase tracking-wider">
-              All Transactions
-            </CardTitle>
+          <CardHeader className="pb-4 flex flex-row items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Activity className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg font-semibold">
+                All Transactions
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">{transactions.length} records found</p>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
+                  <TableRow className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary hover:to-primary/80">
                     <TableHead className="font-semibold uppercase tracking-wider text-xs w-12 text-primary-foreground"></TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Date</TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Description</TableHead>
@@ -71,12 +102,14 @@ const Transactions = () => {
                 </TableHeader>
                 <TableBody>
                   {transactions.map((tx) => (
-                    <TableRow key={tx.id} className="border-b border-border">
+                    <TableRow key={tx.id} className="border-b border-border hover:bg-muted/50 transition-colors">
                       <TableCell>
                         <div
                           className={cn(
-                            "flex h-8 w-8 items-center justify-center rounded-full",
-                            tx.type === "deposit" ? "bg-success/20" : "bg-destructive/20"
+                            "flex h-9 w-9 items-center justify-center rounded-full",
+                            tx.type === "deposit" 
+                              ? "bg-success/15 ring-2 ring-success/20" 
+                              : "bg-destructive/15 ring-2 ring-destructive/20"
                           )}
                         >
                           {tx.type === "deposit" ? (
