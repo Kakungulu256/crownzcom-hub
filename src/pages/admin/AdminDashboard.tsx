@@ -18,8 +18,9 @@ import {
   TrendingUp,
   AlertCircle,
   CheckCircle,
-  Clock,
   ArrowRight,
+  Activity,
+  Sparkles,
 } from "lucide-react";
 import {
   BarChart,
@@ -44,9 +45,9 @@ const monthlyData = [
 ];
 
 const memberDistribution = [
-  { name: "Active", value: 42, color: "hsl(var(--chart-2))" },
-  { name: "Inactive", value: 8, color: "hsl(var(--chart-1))" },
-  { name: "Pending", value: 5, color: "hsl(var(--chart-4))" },
+  { name: "Active", value: 42, color: "hsl(var(--chart-1))" },
+  { name: "Inactive", value: 8, color: "hsl(var(--chart-2))" },
+  { name: "Pending", value: 5, color: "hsl(var(--chart-3))" },
 ];
 
 const pendingLoans = [
@@ -59,6 +60,28 @@ const AdminDashboard = () => {
   return (
     <AppLayout title="Admin Dashboard">
       <div className="space-y-6">
+        {/* Page Header */}
+        <div className="rounded-lg p-6 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,45%)] text-white">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles className="h-5 w-5 text-accent" />
+                <span className="text-sm text-white/80 uppercase tracking-wider">Admin Panel</span>
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight">Welcome to Administration</h2>
+              <p className="text-white/80 mt-1">
+                Monitor club performance and manage member activities
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm text-center">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Total Pool</p>
+                <p className="font-mono font-bold text-xl">KES 10.7M</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* KPIs */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <StatsCard
@@ -94,10 +117,16 @@ const AdminDashboard = () => {
         {/* Charts */}
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold uppercase tracking-wider">
-                Monthly Overview
-              </CardTitle>
+            <CardHeader className="pb-4 flex flex-row items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Activity className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="text-lg font-semibold">
+                  Monthly Overview
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">Financial activity for the past 6 months</p>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="h-[300px]">
@@ -117,14 +146,15 @@ const AdminDashboard = () => {
                     <Tooltip
                       contentStyle={{
                         background: "hsl(var(--card))",
-                        border: "2px solid hsl(var(--border))",
-                        boxShadow: "var(--shadow-sm)",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                        boxShadow: "var(--shadow-md)",
                       }}
                       formatter={(value: number) => [`KES ${value.toLocaleString()}`, ""]}
                     />
-                    <Bar dataKey="deposits" fill="hsl(var(--chart-2))" name="Deposits" />
-                    <Bar dataKey="loans" fill="hsl(var(--chart-3))" name="Loans" />
-                    <Bar dataKey="withdrawals" fill="hsl(var(--chart-1))" name="Withdrawals" />
+                    <Bar dataKey="deposits" fill="hsl(var(--chart-1))" name="Deposits" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="loans" fill="hsl(var(--chart-3))" name="Loans" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="withdrawals" fill="hsl(var(--chart-2))" name="Withdrawals" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -147,17 +177,18 @@ const AdminDashboard = () => {
                       cy="50%"
                       innerRadius={50}
                       outerRadius={80}
-                      paddingAngle={2}
+                      paddingAngle={4}
                       dataKey="value"
                     >
                       {memberDistribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} stroke="hsl(var(--foreground))" strokeWidth={2} />
+                        <Cell key={`cell-${index}`} fill={entry.color} stroke="hsl(var(--background))" strokeWidth={2} />
                       ))}
                     </Pie>
                     <Tooltip
                       contentStyle={{
                         background: "hsl(var(--card))",
-                        border: "2px solid hsl(var(--border))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
                       }}
                     />
                   </PieChart>
@@ -166,8 +197,8 @@ const AdminDashboard = () => {
               <div className="flex items-center justify-center gap-4 mt-4">
                 {memberDistribution.map((item) => (
                   <div key={item.name} className="flex items-center gap-2">
-                    <div className="h-3 w-3" style={{ backgroundColor: item.color }} />
-                    <span className="text-sm">{item.name} ({item.value})</span>
+                    <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                    <span className="text-sm font-medium">{item.name} ({item.value})</span>
                   </div>
                 ))}
               </div>
@@ -178,9 +209,17 @@ const AdminDashboard = () => {
         {/* Pending Actions */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-4">
-            <CardTitle className="text-lg font-semibold uppercase tracking-wider">
-              Pending Loan Approvals
-            </CardTitle>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-warning/20 flex items-center justify-center">
+                <AlertCircle className="h-5 w-5 text-warning" />
+              </div>
+              <div>
+                <CardTitle className="text-lg font-semibold">
+                  Pending Loan Approvals
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">Requires your attention</p>
+              </div>
+            </div>
             <Button variant="outline" size="sm">
               View All
               <ArrowRight className="h-4 w-4 ml-2" />
@@ -190,7 +229,7 @@ const AdminDashboard = () => {
             <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
+                  <TableRow className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary hover:to-primary/80">
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Purpose</TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Amount</TableHead>
@@ -201,14 +240,14 @@ const AdminDashboard = () => {
                 </TableHeader>
                 <TableBody>
                   {pendingLoans.map((loan) => (
-                    <TableRow key={loan.id} className="border-b border-border">
+                    <TableRow key={loan.id} className="border-b border-border hover:bg-muted/50">
                       <TableCell className="font-medium">{loan.member}</TableCell>
                       <TableCell>{loan.purpose}</TableCell>
-                      <TableCell className="font-mono">KES {loan.amount.toLocaleString()}</TableCell>
+                      <TableCell className="font-mono font-semibold">KES {loan.amount.toLocaleString()}</TableCell>
                       <TableCell>
                         <Badge
                           variant={loan.risk === "low" ? "default" : "secondary"}
-                          className="uppercase text-xs tracking-wider"
+                          className={`uppercase text-xs tracking-wider ${loan.risk === "low" ? "bg-success/20 text-success border-success/30" : "bg-warning/20 text-warning border-warning/30"}`}
                         >
                           {loan.risk}
                         </Badge>
@@ -216,7 +255,7 @@ const AdminDashboard = () => {
                       <TableCell className="font-mono text-sm">{loan.date}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
-                          <Button variant="success" size="xs">
+                          <Button variant="default" size="xs" className="bg-success hover:bg-success/90">
                             <CheckCircle className="h-3 w-3 mr-1" />
                             Approve
                           </Button>

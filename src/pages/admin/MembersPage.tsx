@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Search, Filter, Plus, MoreHorizontal, Mail, Phone } from "lucide-react";
+import { Search, Filter, Plus, MoreHorizontal, Mail, Phone, Users } from "lucide-react";
 
 const members = [
   { id: 1, name: "John Doe", email: "john@example.com", phone: "+254 712 345 678", savings: 175000, loans: 33000, status: "active", joined: "2022-03-15" },
@@ -24,22 +24,47 @@ const members = [
 ];
 
 const MembersPage = () => {
+  const activeCount = members.filter(m => m.status === "active").length;
+  const totalSavings = members.reduce((sum, m) => sum + m.savings, 0);
+
   return (
     <AppLayout title="Members">
       <div className="space-y-6">
+        {/* Page Header */}
+        <div className="rounded-lg p-6 bg-gradient-to-r from-[hsl(260,50%,35%)] to-[hsl(280,50%,45%)] text-white">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Member Management</h2>
+              <p className="text-white/80 mt-1">
+                View and manage all club members
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm text-center">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Active</p>
+                <p className="font-mono font-bold text-xl">{activeCount}</p>
+              </div>
+              <div className="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm text-center">
+                <p className="text-xs text-white/70 uppercase tracking-wider">Total Savings</p>
+                <p className="font-mono font-bold text-xl">KES {(totalSavings / 1000).toFixed(0)}K</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Actions */}
         <Card>
           <CardContent className="pt-6">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input placeholder="Search members..." className="pl-9" />
+                <Input placeholder="Search members by name or email..." className="pl-9" />
               </div>
               <Button variant="outline">
                 <Filter className="h-4 w-4 mr-2" />
                 Filter
               </Button>
-              <Button variant="accent">
+              <Button>
                 <Plus className="h-4 w-4 mr-2" />
                 Add Member
               </Button>
@@ -49,16 +74,22 @@ const MembersPage = () => {
 
         {/* Members Table */}
         <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold uppercase tracking-wider">
-              All Members ({members.length})
-            </CardTitle>
+          <CardHeader className="pb-4 flex flex-row items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Users className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg font-semibold">
+                All Members
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">{members.length} total members</p>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="rounded-lg border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
+                  <TableRow className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary hover:to-primary/80">
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Member</TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-primary-foreground">Contact</TableHead>
                     <TableHead className="font-semibold uppercase tracking-wider text-xs text-right text-primary-foreground">Savings</TableHead>
@@ -70,11 +101,11 @@ const MembersPage = () => {
                 </TableHeader>
                 <TableBody>
                   {members.map((member) => (
-                    <TableRow key={member.id} className="border-b border-border">
+                    <TableRow key={member.id} className="border-b border-border hover:bg-muted/50 transition-colors">
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-9 w-9 border-2 border-primary">
-                            <AvatarFallback className="bg-primary/20 font-semibold text-sm">
+                          <Avatar className="h-10 w-10 ring-2 ring-primary/20">
+                            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-primary/10 font-semibold text-sm text-primary">
                               {member.name.split(" ").map(n => n[0]).join("")}
                             </AvatarFallback>
                           </Avatar>
@@ -84,11 +115,11 @@ const MembersPage = () => {
                       <TableCell>
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 text-sm">
-                            <Mail className="h-3 w-3 text-muted-foreground" />
+                            <Mail className="h-3 w-3 text-primary/60" />
                             <span className="text-muted-foreground">{member.email}</span>
                           </div>
                           <div className="flex items-center gap-2 text-sm">
-                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            <Phone className="h-3 w-3 text-primary/60" />
                             <span className="font-mono text-muted-foreground">{member.phone}</span>
                           </div>
                         </div>
@@ -105,14 +136,14 @@ const MembersPage = () => {
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={
+                          variant="outline"
+                          className={`uppercase text-xs tracking-wider ${
                             member.status === "active"
-                              ? "default"
+                              ? "bg-success/10 text-success border-success/30"
                               : member.status === "inactive"
-                              ? "secondary"
-                              : "outline"
-                          }
-                          className="uppercase text-xs tracking-wider"
+                              ? "bg-muted text-muted-foreground border-muted"
+                              : "bg-warning/10 text-warning border-warning/30"
+                          }`}
                         >
                           {member.status}
                         </Badge>
@@ -121,7 +152,7 @@ const MembersPage = () => {
                         {member.joined}
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary/10">
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </TableCell>
