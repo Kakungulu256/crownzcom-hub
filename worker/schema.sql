@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
@@ -7,7 +7,11 @@ CREATE TABLE users (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert default admin user (password: admin123)
--- SHA-256 hash of "admin123" = 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
-INSERT INTO users (name, email, password, role) VALUES 
-('Admin User', 'crownzcom@gmail.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');
+-- Note: Run this separately after deploying to create admin user
+-- The password should be hashed using bcrypt before inserting
+-- Example: bcrypt.hash('admin123', 10) generates a hash like:
+-- $2a$10$... (60 character bcrypt hash)
+
+-- To create admin user, use the /auth/register endpoint or run:
+-- INSERT INTO users (name, email, password, role) VALUES 
+-- ('Admin User', 'crownzcom@gmail.com', '<bcrypt-hash-here>', 'admin');
