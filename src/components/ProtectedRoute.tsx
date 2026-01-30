@@ -7,13 +7,21 @@ interface ProtectedRouteProps {
   requireAdmin?: boolean;
 }
 
+// Set to true to bypass authentication during development
+const DEV_BYPASS_AUTH = true;
+
 const ProtectedRoute = ({ children, requireAdmin = false }: ProtectedRouteProps) => {
   const { user, isAdmin, loading } = useAuth();
+
+  // Bypass authentication in development mode
+  if (DEV_BYPASS_AUTH) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-900"></div>
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
       </div>
     );
   }

@@ -1,12 +1,15 @@
 {
   "name": "crownzcom-auth-worker",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
+  "dependencies": {
+    "bcryptjs": "^2.4.3"
+  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241218.0",
-    "wrangler": "^4.61.1"
+    "wrangler": "^3.0.0"
   }
 }
