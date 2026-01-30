@@ -8,5 +8,6 @@ CREATE TABLE users (
 );
 
 -- Insert default admin user (password: admin123)
+-- SHA-256 hash of "admin123" = 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
 INSERT INTO users (name, email, password, role) VALUES 
-('Admin User', 'crownzcom@gmail.com', 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f', 'admin');
+('Admin User', 'crownzcom@gmail.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin');
