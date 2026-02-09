@@ -1,0 +1,1030 @@
+import { useState, useEffect } from 'react';
+import { databases, DATABASE_ID, COLLECTIONS } from '../../lib/appwrite';
+import { formatCurrency } from '../../utils/financial';
+import { DocumentArrowDownIcon, ChartBarIcon } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
+import { listAllDocuments } from '../../lib/pagination';
+import { createPdfDoc, addSectionTitle, addKeyValueRows, addSimpleTable, savePdf } from '../../lib/pdf';
+import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
+import { createLedgerEntry } from '../../lib/ledger';
+
+const ReportsManagement = () => {
+  const [reportData, setReportData] = useState({
+    members: [],
+    loans: [],
+    savings: [],
+    loanRepayments: [],
+    loanCharges: [],
+    subscriptions: [],
+    unitTrust: [],
+    expenses: [],
+    interestMonthly: [],
+    ledger: []
+  });
+  const [loading, setLoading] = useState(true);
+  const [ledgerReady, setLedgerReady] = useState(true);
+  const [cashEntryLoading, setCashEntryLoading] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState('');
+  const [statementYear, setStatementYear] = useState(new Date().getFullYear());
+  const [statementMonth, setStatementMonth] = useState('');
+  const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
+  const [cashEntryForm, setCashEntryForm] = useState({
+    amount: '',
+    description: '',
+    direction: 'credit',
+    date: new Date().toISOString().split('T')[0]
+  });
+
+  useEffect(() => {
+    fetchReportData();
+  }, []);
+
+  const fetchReportData = async () => {
+    try {
+      const requests = [
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.MEMBERS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOANS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SUBSCRIPTIONS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.UNIT_TRUST),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.EXPENSES),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.INTEREST_MONTHLY),
+        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG)
+      ];
+
+      if (COLLECTIONS.LEDGER_ENTRIES) {
+        requests.push(listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LEDGER_ENTRIES));
+      } else {
+        setLedgerReady(false);
+      }
+
+      const [
+        members,
+        loans,
+        savings,
+        loanRepayments,
+        loanCharges,
+        subscriptions,
+        unitTrust,
+        expenses,
+        interestMonthly,
+        config,
+        ledger = []
+      ] = await Promise.all(requests);
+
+      setReportData({
+        members,
+        loans,
+        savings,
+        loanRepayments,
+        loanCharges,
+        subscriptions,
+        unitTrust,
+        expenses,
+        interestMonthly,
+        ledger
+      });
+      setFinancialConfig(config || { ...DEFAULT_FINANCIAL_CONFIG });
+    } catch (error) {
+      toast.error('Failed to fetch report data');
+      console.error('Error fetching report data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const normalizeMemberId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (value.$id) return value.$id;
+    if (Array.isArray(value) && value[0]?.$id) return value[0].$id;
+    return '';
+  };
+
+  const sumLedgerByTypes = (types) => {
+    return reportData.ledger
+      .filter(entry => types.includes(entry.type))
+      .reduce((sum, entry) => sum + (entry.amount || 0), 0);
+  };
+
+  const sumMemberLedger = (memberId, types) => {
+    return reportData.ledger
+      .filter(entry => normalizeMemberId(entry.memberId) === memberId && types.includes(entry.type))
+      .reduce((sum, entry) => sum + (entry.amount || 0), 0);
+  };
+
+  const sumMemberSavings = (memberId) => {
+    return reportData.savings
+      .filter(saving => normalizeMemberId(saving.memberId) === memberId)
+      .reduce((sum, saving) => sum + (saving.amount || 0), 0);
+  };
+
+  const hasLedgerData = reportData.ledger.length > 0;
+
+  const getLedgerRows = (type) => reportData.ledger.filter(entry => entry.type === type);
+
+  const parseRepaymentPlan = (loan) => {
+    if (!loan?.repaymentPlan) return [];
+    try {
+      return JSON.parse(loan.repaymentPlan);
+    } catch {
+      return [];
+    }
+  };
+
+  const getLoanInterestBreakdown = () => {
+    const repaymentsByLoan = reportData.loanRepayments.reduce((acc, repayment) => {
+      const loanId = repayment.loanId?.$id || repayment.loanId;
+      if (!loanId) return acc;
+      acc[loanId] = acc[loanId] || [];
+      acc[loanId].push(repayment);
+      return acc;
+    }, {});
+
+    let interestPaid = 0;
+    let interestAccrued = 0;
+
+    reportData.loans.forEach((loan) => {
+      const schedule = parseRepaymentPlan(loan);
+      const repayments = repaymentsByLoan[loan.$id] || [];
+      const paidMonths = new Set(repayments.map(r => parseInt(r.month)));
+
+      schedule.forEach((item) => {
+        const month = parseInt(item.month);
+        const interestAmount = parseInt(item.interest) || 0;
+        if (paidMonths.has(month)) {
+          interestPaid += interestAmount;
+        } else {
+          interestAccrued += interestAmount;
+        }
+      });
+    });
+
+    return { interestPaid, interestAccrued };
+  };
+
+  const generateMemberReport = () => {
+    const memberReport = reportData.members.map(member => {
+      const memberSavings = hasLedgerData
+        ? sumMemberLedger(member.$id, ['Savings'])
+        : sumMemberSavings(member.$id);
+      const memberLoans = reportData.loans.filter(loan => normalizeMemberId(loan.memberId) === member.$id);
+      const activeLoans = memberLoans.filter(loan => loan.status === 'active');
+      const activeBalance = activeLoans.reduce((total, loan) => total + (loan.balance || loan.amount), 0);
+
+      return {
+        name: member.name,
+        membershipNumber: member.membershipNumber,
+        email: member.email,
+        phone: member.phone,
+        joinDate: member.joinDate,
+        totalSavings: memberSavings,
+        loanEligibility: memberSavings * 0.8,
+        activeLoans: activeLoans.length,
+        totalLoanAmount: activeBalance,
+        availableCredit: Math.max(0, (memberSavings * 0.8) - activeBalance)
+      };
+    });
+
+    return memberReport;
+  };
+
+  const generateFinancialSummary = () => {
+    const totalSavings = hasLedgerData
+      ? sumLedgerByTypes(['Savings'])
+      : reportData.savings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
+    const totalLoansDisbursed = hasLedgerData
+      ? sumLedgerByTypes(['LoanDisbursement'])
+      : reportData.loans
+          .filter(loan => ['active', 'approved', 'completed'].includes(loan.status))
+          .reduce((sum, loan) => sum + (loan.amount || 0), 0);
+    const totalLoanRepayments = hasLedgerData
+      ? sumLedgerByTypes(['LoanRepayment'])
+      : reportData.loanRepayments.reduce((sum, repayment) => sum + (repayment.amount || 0), 0);
+    const totalSubscriptions = hasLedgerData
+      ? sumLedgerByTypes(['Subscription'])
+      : reportData.subscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
+    const totalUnitTrust = hasLedgerData
+      ? sumLedgerByTypes(['UnitTrust'])
+      : reportData.unitTrust.reduce((sum, record) => sum + (record.amount || 0), 0);
+    const totalExpenses = hasLedgerData
+      ? sumLedgerByTypes(['Expense'])
+      : reportData.expenses.reduce((sum, record) => sum + (record.amount || 0), 0);
+    const totalTransferCharges = hasLedgerData
+      ? sumLedgerByTypes(['TransferCharge'])
+      : reportData.loanCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0);
+    const totalInterestPayouts = sumLedgerByTypes(['InterestPayout']);
+    const trustInterestEarned = reportData.interestMonthly.reduce(
+      (sum, record) => sum + (record.trustInterestTotal || 0),
+      0
+    );
+    const { interestPaid, interestAccrued } = getLoanInterestBreakdown();
+
+    const cashAtBank = sumLedgerByTypes(['CashAtBank']);
+
+    const totalLoansActive = reportData.loans
+      .filter(loan => loan.status === 'active')
+      .reduce((sum, loan) => sum + (loan.balance || loan.amount), 0);
+
+    return {
+      totalMembers: reportData.members.length,
+      totalSavings,
+      totalLoansDisbursed,
+      totalLoanRepayments,
+      totalSubscriptions,
+      totalUnitTrust,
+      totalExpenses,
+      totalTransferCharges,
+      totalInterestPayouts,
+      trustInterestEarned,
+      loanInterestPaid: interestPaid,
+      loanInterestAccrued: interestAccrued,
+      cashAtBank,
+      portfolioValue: totalLoansActive,
+      savingsToLoanRatio: totalSavings > 0 ? (totalLoansActive / totalSavings * 100).toFixed(2) : 0
+    };
+  };
+
+  const exportToCSV = (data, filename) => {
+    if (data.length === 0) {
+      toast.error('No data to export');
+      return;
+    }
+
+    const headers = Object.keys(data[0]);
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row =>
+        headers.map(header => {
+          const value = row[header];
+          return typeof value === 'string' && value.includes(',') ? `"${value}"` : value;
+        }).join(',')
+      )
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.success(`${filename} exported successfully`);
+  };
+
+  const memberReport = generateMemberReport();
+  const financialSummary = generateFinancialSummary();
+  const cashEntries = getLedgerRows('CashAtBank').sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+  const loanLabelMap = reportData.loans
+    .slice()
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .reduce((acc, loan, index) => {
+      acc[loan.$id] = `Loan_${index + 1}`;
+      return acc;
+    }, {});
+  const memberNameById = reportData.members.reduce((acc, member) => {
+    acc[member.$id] = member.name;
+    return acc;
+  }, {});
+  const getLoanLabel = (loanId) => loanLabelMap[loanId?.$id || loanId] || 'Loan';
+  const disbursementLedgerCount = getLedgerRows('LoanDisbursement').length;
+  const repaymentLedgerCount = getLedgerRows('LoanRepayment').length;
+  const chargeLedgerCount = getLedgerRows('TransferCharge').length;
+
+  const exportAgmSummaryPdf = () => {
+    const meta = [
+      `Generated: ${new Date().toLocaleString()}`,
+      `Total Members: ${financialSummary.totalMembers}`
+    ];
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'AGM Financial Summary',
+      subtitle: 'Crownzcom Investment Club',
+      meta
+    });
+
+    let cursorY = startY;
+    const totalAssets =
+      financialSummary.cashAtBank +
+      financialSummary.portfolioValue +
+      financialSummary.loanInterestAccrued;
+    const totalLiabilities = financialSummary.totalSavings;
+    const totalEquity = totalAssets - totalLiabilities;
+
+    cursorY = addSectionTitle(doc, cursorY, 'Balance Sheet (Statement of Financial Position)');
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Assets - Cash at Bank (Manual)', value: formatCurrency(financialSummary.cashAtBank) },
+      { label: 'Assets - Loans Receivable', value: formatCurrency(financialSummary.portfolioValue) },
+      { label: 'Assets - Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) },
+      { label: 'Total Assets', value: formatCurrency(totalAssets) },
+      { label: 'Liabilities - Member Savings/Deposits', value: formatCurrency(totalLiabilities) },
+      { label: 'Total Liabilities', value: formatCurrency(totalLiabilities) },
+      { label: 'Equity - Retained Earnings / Unreconciled Difference', value: formatCurrency(totalEquity) },
+      { label: 'Total Equity', value: formatCurrency(totalEquity) }
+    ]);
+
+    const totalIncome =
+      financialSummary.totalSubscriptions +
+      financialSummary.loanInterestPaid +
+      financialSummary.trustInterestEarned +
+      financialSummary.totalTransferCharges;
+    const totalExpenses =
+      financialSummary.totalUnitTrust +
+      financialSummary.totalExpenses +
+      financialSummary.totalInterestPayouts;
+    const netIncome = totalIncome - totalExpenses;
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Statement of Income & Expenditure)');
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Category', 'Amount'],
+      [
+        ['Income - Subscriptions', formatCurrency(financialSummary.totalSubscriptions)],
+        ['Income - Loan Interest Paid', formatCurrency(financialSummary.loanInterestPaid)],
+        ['Income - Trust Interest Earned', formatCurrency(financialSummary.trustInterestEarned)],
+        ['Income - Transfer Charges', formatCurrency(financialSummary.totalTransferCharges)],
+        ['Total Income', formatCurrency(totalIncome)],
+        ['Expense - Unit Trust', formatCurrency(financialSummary.totalUnitTrust)],
+        ['Expense - Other Expenses', formatCurrency(financialSummary.totalExpenses)],
+        ['Expense - Interest Payouts', formatCurrency(financialSummary.totalInterestPayouts)],
+        ['Total Expenses', formatCurrency(totalExpenses)],
+        ['Net Income', formatCurrency(netIncome)]
+      ]
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Notes & Schedules - Loan Portfolio Summary');
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
+      { label: 'Total Repaid', value: formatCurrency(financialSummary.totalLoanRepayments) },
+      { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
+      { label: 'Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) }
+    ]);
+
+    savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportCashAtBankPdf = () => {
+    const sortedEntries = [...cashEntries].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    let runningBalance = 0;
+    const tableRows = sortedEntries.map(entry => {
+      runningBalance += entry.amount || 0;
+      return [
+        entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
+        entry.amount >= 0 ? 'Credit' : 'Debit',
+        formatCurrency(Math.abs(entry.amount || 0)),
+        formatCurrency(runningBalance),
+        entry.notes || ''
+      ];
+    });
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Cash at Bank Statement',
+      subtitle: 'Manual Entries',
+      meta: [`Generated: ${new Date().toLocaleString()}`]
+    });
+
+    let cursorY = startY;
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Type', 'Amount', 'Running Balance', 'Description'],
+      tableRows
+    );
+
+    savePdf(doc, `cash-at-bank-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportLoanPortfolioPdf = () => {
+    const loanLabelMap = reportData.loans
+      .slice()
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .reduce((acc, loan, index) => {
+        acc[loan.$id] = `Loan_${index + 1}`;
+        return acc;
+      }, {});
+    const memberNameById = reportData.members.reduce((acc, member) => {
+      acc[member.$id] = member.name;
+      return acc;
+    }, {});
+    const activeLoans = reportData.loans.filter(loan => loan.status === 'active');
+    const tableRows = activeLoans.map(loan => ([
+      loanLabelMap[loan.$id] || loan.$id,
+      memberNameById[normalizeMemberId(loan.memberId)] || 'Unknown',
+      formatCurrency(loan.amount),
+      formatCurrency(loan.balance || loan.amount),
+      loan.status
+    ]));
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Loan Portfolio Summary',
+      subtitle: 'Active Loans',
+      meta: [`Generated: ${new Date().toLocaleString()}`]
+    });
+
+    let cursorY = startY;
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
+      { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
+      { label: 'Active Loans', value: activeLoans.length }
+    ]);
+    cursorY += 4;
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Loan', 'Member', 'Amount', 'Balance', 'Status'],
+      tableRows
+    );
+
+    savePdf(doc, `loan-portfolio-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportMemberSavingsPdf = () => {
+    const rows = memberReport.map(member => ([
+      member.name,
+      member.membershipNumber,
+      formatCurrency(member.totalSavings)
+    ]));
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Member Savings Summary',
+      subtitle: 'Totals by Member',
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Total Savings: ${formatCurrency(financialSummary.totalSavings)}`
+      ]
+    });
+
+    let cursorY = startY;
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Member', 'Membership #', 'Total Savings'],
+      rows
+    );
+
+    savePdf(doc, `member-savings-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportInterestDistributionPdf = () => {
+    const interestAccruals = getLedgerRows('LoanInterestAccrual')
+      .concat(getLedgerRows('TrustInterestAccrual'));
+
+    const payoutRows = getLedgerRows('InterestPayout').map(entry => ([
+      entry.memberId || '',
+      formatCurrency(entry.amount || 0),
+      entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : ''
+    ]));
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Interest Distribution Statement',
+      subtitle: 'Loan + Trust Interest',
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Total Accrual Entries: ${interestAccruals.length}`,
+        `Total Payouts: ${formatCurrency(sumLedgerByTypes(['InterestPayout']))}`
+      ]
+    });
+
+    let cursorY = startY;
+    cursorY = addSectionTitle(doc, cursorY, 'Payout Summary');
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Interest Payouts', value: formatCurrency(sumLedgerByTypes(['InterestPayout'])) }
+    ]);
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Payouts by Member');
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Member ID', 'Amount', 'Date'],
+      payoutRows
+    );
+
+    savePdf(doc, `interest-distribution-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportMemberStatementPdf = () => {
+    if (!selectedMemberId) {
+      toast.error('Select a member first');
+      return;
+    }
+    const member = reportData.members.find(m => m.$id === selectedMemberId);
+    if (!member) {
+      toast.error('Member not found');
+      return;
+    }
+    const memberLedger = reportData.ledger
+      .filter(entry => normalizeMemberId(entry.memberId) === selectedMemberId)
+      .filter(entry => {
+        if (!entry.createdAt) return true;
+        const entryDate = new Date(entry.createdAt);
+        const matchesYear = entryDate.getFullYear() === parseInt(statementYear, 10);
+        if (!matchesYear) return false;
+        if (!statementMonth) return true;
+        return entryDate.getMonth() + 1 === parseInt(statementMonth, 10);
+      });
+    const rows = memberLedger
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map(entry => ([
+        entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
+        entry.type,
+        entry.amount ? formatCurrency(entry.amount) : formatCurrency(0),
+        entry.notes || ''
+      ]));
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Member Statement of Account',
+      subtitle: `${member.name} (${member.membershipNumber})`,
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Member: ${member.name}`,
+        `Membership #: ${member.membershipNumber}`,
+        `Period: ${statementYear}${statementMonth ? `-${String(statementMonth).padStart(2, '0')}` : ''}`
+      ]
+    });
+
+    let cursorY = startY;
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Type', 'Amount', 'Description'],
+      rows
+    );
+
+    savePdf(doc, `member-statement-${member.membershipNumber || member.$id}-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const saveCashAtBankEntry = async (event) => {
+    event.preventDefault();
+    if (!COLLECTIONS.LEDGER_ENTRIES) {
+      toast.error('Ledger collection is not configured.');
+      return;
+    }
+    try {
+      setCashEntryLoading(true);
+      const amountValue = parseInt(cashEntryForm.amount || 0, 10);
+      const signedAmount = cashEntryForm.direction === 'credit' ? amountValue : -amountValue;
+      const entryDate = cashEntryForm.date
+        ? new Date(cashEntryForm.date).toISOString()
+        : new Date().toISOString();
+
+      await createLedgerEntry({
+        databases,
+        DATABASE_ID,
+        COLLECTIONS,
+        entry: {
+          type: 'CashAtBank',
+          amount: signedAmount,
+          month: entryDate.slice(0, 7),
+          year: parseInt(entryDate.slice(0, 4), 10),
+          createdAt: entryDate,
+          notes: cashEntryForm.description
+            ? `${cashEntryForm.direction}: ${cashEntryForm.description}`
+            : `${cashEntryForm.direction}`
+        }
+      });
+      toast.success('Cash at Bank entry recorded');
+      setCashEntryForm({
+        amount: '',
+        description: '',
+        direction: 'credit',
+        date: new Date().toISOString().split('T')[0]
+      });
+      fetchReportData();
+    } catch (error) {
+      toast.error('Failed to record Cash at Bank entry');
+    } finally {
+      setCashEntryLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="animate-pulse">Loading reports data...</div>;
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-white p-6 shadow-sm">
+        <h1 className="text-2xl font-semibold text-slate-900">Reports Management</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Generate AGM-ready reports from ledger entries
+        </p>
+        {!ledgerReady && (
+          <p className="mt-3 text-sm text-red-600">
+            Ledger collection is not configured. Set `VITE_APPWRITE_LEDGER_COLLECTION_ID` to enable AGM reports.
+          </p>
+        )}
+        {ledgerReady && reportData.loans.length > 0 && disbursementLedgerCount === 0 && (
+          <p className="mt-3 text-sm text-amber-700">
+            No LoanDisbursement ledger entries found. Check that `LEDGER_ENTRIES_COLLECTION_ID` is set in the loan-management
+            function environment or backfill existing loans.
+          </p>
+        )}
+      </div>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Snapshot</h2>
+          <p className="text-sm text-slate-500">High-level position from the ledger.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Total Members</div>
+            <div className="text-2xl font-bold text-blue-600">{financialSummary.totalMembers}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Total Savings (Ledger)</div>
+            <div className="text-2xl font-bold text-green-600">{formatCurrency(financialSummary.totalSavings)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Active Loans (Balance)</div>
+            <div className="text-2xl font-bold text-yellow-600">{formatCurrency(financialSummary.portfolioValue)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Cash at Bank (Net)</div>
+            <div className="text-2xl font-bold text-purple-600">{formatCurrency(financialSummary.cashAtBank)}</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Income, Charges & Activity</h2>
+          <p className="text-sm text-slate-500">Core inflows and expenses tracked through the ledger.</p>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Loan Disbursements</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalLoansDisbursed)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Loan Repayments</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalLoanRepayments)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Subscriptions</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalSubscriptions)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Unit Trust</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalUnitTrust)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Expenses</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalExpenses)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Transfer Charges</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalTransferCharges)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Interest Paid (Loans)</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.loanInterestPaid)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Accrued Interest (Loans)</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.loanInterestAccrued)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Trust Interest Earned</div>
+            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.trustInterestEarned)}</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Exports</h2>
+          <p className="text-sm text-slate-500">Generate PDFs and CSVs for AGM reporting and auditing.</p>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">AGM Exports (Ledger)</h3>
+          <div className="space-y-4">
+            <button
+              onClick={exportAgmSummaryPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export AGM Summary (PDF)
+            </button>
+            <button
+              onClick={exportCashAtBankPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Cash at Bank (PDF)
+            </button>
+            <button
+              onClick={exportLoanPortfolioPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-amber-700 text-white rounded-lg hover:bg-amber-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Loan Portfolio (PDF)
+            </button>
+            <button
+              onClick={exportMemberSavingsPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Member Savings (PDF)
+            </button>
+            <button
+              onClick={exportInterestDistributionPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Interest Distribution (PDF)
+            </button>
+            <button
+              onClick={() => exportToCSV(memberReport, 'member-report')}
+              className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Member Report (CSV)
+            </button>
+            <button
+              onClick={() => exportToCSV(reportData.ledger, 'ledger-entries')}
+              className="w-full flex items-center justify-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Ledger Entries (CSV)
+            </button>
+          </div>
+        </div>
+
+          <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Ledger Type Exports</h3>
+          <div className="space-y-4">
+            <button
+              onClick={() => exportToCSV(getLedgerRows('Savings'), 'savings-ledger')}
+              className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Savings (CSV)
+            </button>
+            <button
+              onClick={() => exportToCSV(
+                (hasLedgerData
+                  ? getLedgerRows('LoanDisbursement')
+                  : reportData.loans
+                      .filter(loan => ['active', 'approved', 'completed'].includes(loan.status))
+                      .map(loan => ({
+                        loan: loan.$id,
+                        memberId: normalizeMemberId(loan.memberId),
+                        amount: loan.amount,
+                        createdAt: loan.createdAt
+                      }))
+                ),
+                'loans-disbursed'
+              )}
+              className="w-full flex items-center justify-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Loan Disbursements (CSV)
+            </button>
+            <button
+              onClick={() => exportToCSV(
+                getLedgerRows('TransferCharge').map(entry => ({
+                  date: entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
+                  loan: getLoanLabel(entry.loanId),
+                  member: memberNameById[normalizeMemberId(entry.memberId)] || '',
+                  amount: entry.amount || 0,
+                  description: entry.notes || ''
+                })),
+                'transfer-charges'
+              )}
+              className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Transfer Charges (CSV)
+            </button>
+            <button
+              onClick={() => exportToCSV(
+                getLedgerRows('CashAtBank').map(entry => ({
+                  date: entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
+                  direction: entry.amount >= 0 ? 'credit' : 'debit',
+                  amount: Math.abs(entry.amount || 0),
+                  description: entry.notes || ''
+                })),
+                'cash-at-bank'
+              )}
+              className="w-full flex items-center justify-center px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Cash at Bank (CSV)
+            </button>
+            <button
+              onClick={() => exportToCSV(getLedgerRows('Expense'), 'expenses-ledger')}
+              className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Expenses (CSV)
+            </button>
+          </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="card mb-8">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Member Statement of Account</h3>
+        <div className="flex flex-col md:flex-row md:items-end gap-4">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Member</label>
+            <select
+              value={selectedMemberId}
+              onChange={(e) => setSelectedMemberId(e.target.value)}
+              className="form-input"
+            >
+              <option value="">Select member</option>
+              {reportData.members.map(member => (
+                <option key={member.$id} value={member.$id}>
+                  {member.name} ({member.membershipNumber})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+            <input
+              type="number"
+              className="form-input"
+              value={statementYear}
+              onChange={(e) => setStatementYear(parseInt(e.target.value, 10) || new Date().getFullYear())}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Month (optional)</label>
+            <select
+              className="form-input"
+              value={statementMonth}
+              onChange={(e) => setStatementMonth(e.target.value)}
+            >
+              <option value="">All months</option>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(month => (
+                <option key={month} value={month}>
+                  {String(month).padStart(2, '0')}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={exportMemberStatementPdf}
+            className="btn-primary"
+          >
+            Export Member Statement (PDF)
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Cash at Bank (Manual)</h3>
+          <form onSubmit={saveCashAtBankEntry} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (UGX)</label>
+              <input
+                type="number"
+                value={cashEntryForm.amount}
+                onChange={(e) => setCashEntryForm(prev => ({ ...prev, amount: e.target.value }))}
+                className="form-input"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
+              <select
+                value={cashEntryForm.direction}
+                onChange={(e) => setCashEntryForm(prev => ({ ...prev, direction: e.target.value }))}
+                className="form-input"
+                required
+              >
+                <option value="credit">Credit</option>
+                <option value="debit">Debit</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <input
+                type="date"
+                value={cashEntryForm.date}
+                onChange={(e) => setCashEntryForm(prev => ({ ...prev, date: e.target.value }))}
+                className="form-input"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <input
+                type="text"
+                value={cashEntryForm.description}
+                onChange={(e) => setCashEntryForm(prev => ({ ...prev, description: e.target.value }))}
+                className="form-input"
+                placeholder="Optional description"
+              />
+            </div>
+            <button
+              type="submit"
+              className="btn-primary w-full"
+              disabled={cashEntryLoading}
+            >
+              {cashEntryLoading ? (
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                'Record Cash Entry'
+              )}
+            </button>
+          </form>
+        </div>
+
+        <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Cash at Bank Entries</h3>
+          {cashEntries.length === 0 ? (
+            <div className="text-sm text-gray-500">No cash at bank entries recorded.</div>
+          ) : (
+            <div className="space-y-3">
+              {cashEntries.slice(0, 6).map(entry => (
+                <div key={entry.$id} className="border border-gray-200 rounded-lg p-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="font-medium text-gray-900">
+                      {entry.notes || 'Cash entry'}
+                    </span>
+                    <span className={entry.amount >= 0 ? 'text-emerald-700' : 'text-red-700'}>
+                      {formatCurrency(Math.abs(entry.amount || 0))}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-medium text-gray-900">Member Summary</h3>
+          <ChartBarIcon className="h-5 w-5 text-gray-400" />
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Member
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Total Savings
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Loan Eligibility
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Active Loans
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Available Credit
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {memberReport.map((member, index) => (
+                <tr key={index}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">{member.name}</div>
+                    <div className="text-sm text-gray-500">{member.membershipNumber}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-green-600">
+                    {formatCurrency(member.totalSavings)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-blue-600">
+                    {formatCurrency(member.loanEligibility)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
+                    {member.activeLoans}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-purple-600">
+                    {formatCurrency(member.availableCredit)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ReportsManagement;
