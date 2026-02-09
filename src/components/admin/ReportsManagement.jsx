@@ -24,6 +24,8 @@ const ReportsManagement = () => {
   const [loading, setLoading] = useState(true);
   const [ledgerReady, setLedgerReady] = useState(true);
   const [cashEntryLoading, setCashEntryLoading] = useState(false);
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState('');
   const [statementYear, setStatementYear] = useState(new Date().getFullYear());
   const [statementMonth, setStatementMonth] = useState('');
@@ -103,27 +105,64 @@ const ReportsManagement = () => {
     return '';
   };
 
+  const toDate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const isWithinRange = (value) => {
+    if (!reportStartDate && !reportEndDate) return true;
+    const target = toDate(value);
+    if (!target) return false;
+    if (reportStartDate) {
+      const start = new Date(reportStartDate);
+      start.setHours(0, 0, 0, 0);
+      if (target < start) return false;
+    }
+    if (reportEndDate) {
+      const end = new Date(reportEndDate);
+      end.setHours(23, 59, 59, 999);
+      if (target > end) return false;
+    }
+    return true;
+  };
+
+  const filterByDate = (items, dateKey = 'createdAt') => (
+    items.filter(item => isWithinRange(item?.[dateKey]))
+  );
+
+  const filteredLedger = filterByDate(reportData.ledger, 'createdAt');
+  const filteredSavings = filterByDate(reportData.savings, 'createdAt');
+  const filteredLoans = filterByDate(reportData.loans, 'createdAt');
+  const filteredLoanRepayments = filterByDate(reportData.loanRepayments, 'createdAt');
+  const filteredSubscriptions = filterByDate(reportData.subscriptions, 'createdAt');
+  const filteredUnitTrust = filterByDate(reportData.unitTrust, 'createdAt');
+  const filteredExpenses = filterByDate(reportData.expenses, 'createdAt');
+  const filteredLoanCharges = filterByDate(reportData.loanCharges, 'createdAt');
+  const filteredInterestMonthly = filterByDate(reportData.interestMonthly, 'createdAt');
+
   const sumLedgerByTypes = (types) => {
-    return reportData.ledger
+    return filteredLedger
       .filter(entry => types.includes(entry.type))
       .reduce((sum, entry) => sum + (entry.amount || 0), 0);
   };
 
   const sumMemberLedger = (memberId, types) => {
-    return reportData.ledger
+    return filteredLedger
       .filter(entry => normalizeMemberId(entry.memberId) === memberId && types.includes(entry.type))
       .reduce((sum, entry) => sum + (entry.amount || 0), 0);
   };
 
   const sumMemberSavings = (memberId) => {
-    return reportData.savings
+    return filteredSavings
       .filter(saving => normalizeMemberId(saving.memberId) === memberId)
       .reduce((sum, saving) => sum + (saving.amount || 0), 0);
   };
 
-  const hasLedgerData = reportData.ledger.length > 0;
+  const hasLedgerData = ledgerReady && reportData.ledger.length > 0;
 
-  const getLedgerRows = (type) => reportData.ledger.filter(entry => entry.type === type);
+  const getLedgerRows = (type) => filteredLedger.filter(entry => entry.type === type);
 
   const parseRepaymentPlan = (loan) => {
     if (!loan?.repaymentPlan) return [];
@@ -135,7 +174,7 @@ const ReportsManagement = () => {
   };
 
   const getLoanInterestBreakdown = () => {
-    const repaymentsByLoan = reportData.loanRepayments.reduce((acc, repayment) => {
+    const repaymentsByLoan = filteredLoanRepayments.reduce((acc, repayment) => {
       const loanId = repayment.loanId?.$id || repayment.loanId;
       if (!loanId) return acc;
       acc[loanId] = acc[loanId] || [];
@@ -146,7 +185,7 @@ const ReportsManagement = () => {
     let interestPaid = 0;
     let interestAccrued = 0;
 
-    reportData.loans.forEach((loan) => {
+    filteredLoans.forEach((loan) => {
       const schedule = parseRepaymentPlan(loan);
       const repayments = repaymentsByLoan[loan.$id] || [];
       const paidMonths = new Set(repayments.map(r => parseInt(r.month)));
@@ -170,7 +209,7 @@ const ReportsManagement = () => {
       const memberSavings = hasLedgerData
         ? sumMemberLedger(member.$id, ['Savings'])
         : sumMemberSavings(member.$id);
-      const memberLoans = reportData.loans.filter(loan => normalizeMemberId(loan.memberId) === member.$id);
+      const memberLoans = filteredLoans.filter(loan => normalizeMemberId(loan.memberId) === member.$id);
       const activeLoans = memberLoans.filter(loan => loan.status === 'active');
       const activeBalance = activeLoans.reduce((total, loan) => total + (loan.balance || loan.amount), 0);
 
@@ -194,29 +233,29 @@ const ReportsManagement = () => {
   const generateFinancialSummary = () => {
     const totalSavings = hasLedgerData
       ? sumLedgerByTypes(['Savings'])
-      : reportData.savings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
+      : filteredSavings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
     const totalLoansDisbursed = hasLedgerData
       ? sumLedgerByTypes(['LoanDisbursement'])
-      : reportData.loans
+      : filteredLoans
           .filter(loan => ['active', 'approved', 'completed'].includes(loan.status))
           .reduce((sum, loan) => sum + (loan.amount || 0), 0);
     const totalLoanRepayments = hasLedgerData
       ? sumLedgerByTypes(['LoanRepayment'])
-      : reportData.loanRepayments.reduce((sum, repayment) => sum + (repayment.amount || 0), 0);
+      : filteredLoanRepayments.reduce((sum, repayment) => sum + (repayment.amount || 0), 0);
     const totalSubscriptions = hasLedgerData
       ? sumLedgerByTypes(['Subscription'])
-      : reportData.subscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
+      : filteredSubscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
     const totalUnitTrust = hasLedgerData
       ? sumLedgerByTypes(['UnitTrust'])
-      : reportData.unitTrust.reduce((sum, record) => sum + (record.amount || 0), 0);
+      : filteredUnitTrust.reduce((sum, record) => sum + (record.amount || 0), 0);
     const totalExpenses = hasLedgerData
       ? sumLedgerByTypes(['Expense'])
-      : reportData.expenses.reduce((sum, record) => sum + (record.amount || 0), 0);
+      : filteredExpenses.reduce((sum, record) => sum + (record.amount || 0), 0);
     const totalTransferCharges = hasLedgerData
       ? sumLedgerByTypes(['TransferCharge'])
-      : reportData.loanCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0);
+      : filteredLoanCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0);
     const totalInterestPayouts = sumLedgerByTypes(['InterestPayout']);
-    const trustInterestEarned = reportData.interestMonthly.reduce(
+    const trustInterestEarned = filteredInterestMonthly.reduce(
       (sum, record) => sum + (record.trustInterestTotal || 0),
       0
     );
@@ -224,7 +263,7 @@ const ReportsManagement = () => {
 
     const cashAtBank = sumLedgerByTypes(['CashAtBank']);
 
-    const totalLoansActive = reportData.loans
+    const totalLoansActive = filteredLoans
       .filter(loan => loan.status === 'active')
       .reduce((sum, loan) => sum + (loan.balance || loan.amount), 0);
 
@@ -245,6 +284,13 @@ const ReportsManagement = () => {
       portfolioValue: totalLoansActive,
       savingsToLoanRatio: totalSavings > 0 ? (totalLoansActive / totalSavings * 100).toFixed(2) : 0
     };
+  };
+
+  const reportRangeLabel = () => {
+    if (!reportStartDate && !reportEndDate) return 'All dates';
+    const start = reportStartDate ? new Date(reportStartDate).toLocaleDateString() : 'Any';
+    const end = reportEndDate ? new Date(reportEndDate).toLocaleDateString() : 'Any';
+    return `${start} - ${end}`;
   };
 
   const exportToCSV = (data, filename) => {
@@ -282,7 +328,7 @@ const ReportsManagement = () => {
   const cashEntries = getLedgerRows('CashAtBank').sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
-  const loanLabelMap = reportData.loans
+  const loanLabelMap = filteredLoans
     .slice()
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     .reduce((acc, loan, index) => {
@@ -301,7 +347,8 @@ const ReportsManagement = () => {
   const exportAgmSummaryPdf = () => {
     const meta = [
       `Generated: ${new Date().toLocaleString()}`,
-      `Total Members: ${financialSummary.totalMembers}`
+      `Total Members: ${financialSummary.totalMembers}`,
+      `Report Range: ${reportRangeLabel()}`
     ];
     const { doc, cursorY: startY } = createPdfDoc({
       title: 'AGM Financial Summary',
@@ -389,7 +436,10 @@ const ReportsManagement = () => {
     const { doc, cursorY: startY } = createPdfDoc({
       title: 'Cash at Bank Statement',
       subtitle: 'Manual Entries',
-      meta: [`Generated: ${new Date().toLocaleString()}`]
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`
+      ]
     });
 
     let cursorY = startY;
@@ -404,7 +454,7 @@ const ReportsManagement = () => {
   };
 
   const exportLoanPortfolioPdf = () => {
-    const loanLabelMap = reportData.loans
+    const loanLabelMap = filteredLoans
       .slice()
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
       .reduce((acc, loan, index) => {
@@ -415,7 +465,7 @@ const ReportsManagement = () => {
       acc[member.$id] = member.name;
       return acc;
     }, {});
-    const activeLoans = reportData.loans.filter(loan => loan.status === 'active');
+    const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
     const tableRows = activeLoans.map(loan => ([
       loanLabelMap[loan.$id] || loan.$id,
       memberNameById[normalizeMemberId(loan.memberId)] || 'Unknown',
@@ -459,6 +509,7 @@ const ReportsManagement = () => {
       subtitle: 'Totals by Member',
       meta: [
         `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`,
         `Total Savings: ${formatCurrency(financialSummary.totalSavings)}`
       ]
     });
@@ -489,6 +540,7 @@ const ReportsManagement = () => {
       subtitle: 'Loan + Trust Interest',
       meta: [
         `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`,
         `Total Accrual Entries: ${interestAccruals.length}`,
         `Total Payouts: ${formatCurrency(sumLedgerByTypes(['InterestPayout']))}`
       ]
@@ -522,7 +574,7 @@ const ReportsManagement = () => {
       toast.error('Member not found');
       return;
     }
-    const memberLedger = reportData.ledger
+    const memberLedger = filteredLedger
       .filter(entry => normalizeMemberId(entry.memberId) === selectedMemberId)
       .filter(entry => {
         if (!entry.createdAt) return true;
@@ -546,6 +598,7 @@ const ReportsManagement = () => {
       subtitle: `${member.name} (${member.membershipNumber})`,
       meta: [
         `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`,
         `Member: ${member.name}`,
         `Membership #: ${member.membershipNumber}`,
         `Period: ${statementYear}${statementMonth ? `-${String(statementMonth).padStart(2, '0')}` : ''}`
@@ -623,13 +676,52 @@ const ReportsManagement = () => {
             Ledger collection is not configured. Set `VITE_APPWRITE_LEDGER_COLLECTION_ID` to enable AGM reports.
           </p>
         )}
-        {ledgerReady && reportData.loans.length > 0 && disbursementLedgerCount === 0 && (
+        {ledgerReady && filteredLoans.length > 0 && disbursementLedgerCount === 0 && (
           <p className="mt-3 text-sm text-amber-700">
             No LoanDisbursement ledger entries found. Check that `LEDGER_ENTRIES_COLLECTION_ID` is set in the loan-management
             function environment or backfill existing loans.
           </p>
         )}
       </div>
+
+      <section className="card">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Report Date Range</h2>
+            <p className="text-sm text-slate-500">Applies to summaries and all exports.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">Start date</label>
+              <input
+                type="date"
+                className="form-input"
+                value={reportStartDate}
+                onChange={(e) => setReportStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">End date</label>
+              <input
+                type="date"
+                className="form-input"
+                value={reportEndDate}
+                onChange={(e) => setReportEndDate(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn-secondary h-11 mt-6"
+              onClick={() => {
+                setReportStartDate('');
+                setReportEndDate('');
+              }}
+            >
+              Clear Range
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="space-y-4">
         <div>
@@ -753,7 +845,7 @@ const ReportsManagement = () => {
               Export Member Report (CSV)
             </button>
             <button
-              onClick={() => exportToCSV(reportData.ledger, 'ledger-entries')}
+              onClick={() => exportToCSV(filteredLedger, 'ledger-entries')}
               className="w-full flex items-center justify-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
@@ -776,7 +868,7 @@ const ReportsManagement = () => {
               onClick={() => exportToCSV(
                 (hasLedgerData
                   ? getLedgerRows('LoanDisbursement')
-                  : reportData.loans
+                  : filteredLoans
                       .filter(loan => ['active', 'approved', 'completed'].includes(loan.status))
                       .map(loan => ({
                         loan: loan.$id,

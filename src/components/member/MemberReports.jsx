@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { databases, DATABASE_ID, COLLECTIONS, Query } from '../../lib/appwrite';
 import { useAuth } from '../../lib/auth';
 import { formatCurrency } from '../../utils/financial';
-import { DocumentArrowDownIcon, ChartBarIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import { DocumentArrowDownIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { fetchMemberRecord } from '../../lib/member';
 import { listAllDocuments } from '../../lib/pagination';
+import { createPdfDoc, addSectionTitle, addKeyValueRows, addSimpleTable, savePdf } from '../../lib/pdf';
 
 const MemberReports = () => {
   const { user } = useAuth();
@@ -13,10 +14,13 @@ const MemberReports = () => {
     member: null,
     savings: [],
     loans: [],
-    loanCharges: []
+    loanCharges: [],
+    ledger: []
   });
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -35,7 +39,7 @@ const MemberReports = () => {
       const memberId = member.$id;
       
       // Fetch member's data
-      const [savings, loans, charges] = await Promise.all([
+      const requests = [
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS, [
           Query.equal('memberId', memberId)
         ]),
@@ -43,7 +47,15 @@ const MemberReports = () => {
           Query.equal('memberId', memberId)
         ]),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES)
-      ]);
+      ];
+
+      if (COLLECTIONS.LEDGER_ENTRIES) {
+        requests.push(listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LEDGER_ENTRIES, [
+          Query.equal('memberId', memberId)
+        ]));
+      }
+
+      const [savings, loans, charges, ledger = []] = await Promise.all(requests);
       
       setMemberData({
         member,
@@ -51,7 +63,8 @@ const MemberReports = () => {
         loans,
         loanCharges: charges.filter(charge => 
           loans.some(loan => loan.$id === charge.loanId)
-        )
+        ),
+        ledger
       });
     } catch (error) {
       console.error('Error fetching member data:', error);
@@ -89,6 +102,130 @@ const MemberReports = () => {
     };
   };
 
+  const toDate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const isWithinRange = (value) => {
+    if (!reportStartDate && !reportEndDate) return true;
+    const target = toDate(value);
+    if (!target) return false;
+    if (reportStartDate) {
+      const start = new Date(reportStartDate);
+      start.setHours(0, 0, 0, 0);
+      if (target < start) return false;
+    }
+    if (reportEndDate) {
+      const end = new Date(reportEndDate);
+      end.setHours(23, 59, 59, 999);
+      if (target > end) return false;
+    }
+    return true;
+  };
+
+  const filterByDate = (items, dateKey = 'createdAt') => (
+    items.filter(item => isWithinRange(item?.[dateKey]))
+  );
+
+  const filteredSavings = filterByDate(memberData.savings, 'createdAt');
+  const filteredLoans = filterByDate(memberData.loans, 'createdAt');
+  const filteredLedger = filterByDate(memberData.ledger, 'createdAt');
+
+  const reportRangeLabel = () => {
+    if (!reportStartDate && !reportEndDate) return 'All dates';
+    const start = reportStartDate ? new Date(reportStartDate).toLocaleDateString() : 'Any';
+    const end = reportEndDate ? new Date(reportEndDate).toLocaleDateString() : 'Any';
+    return `${start} - ${end}`;
+  };
+
+  const exportMemberPdf = () => {
+    if (!memberData.member) {
+      toast.error('Member data not available');
+      return;
+    }
+
+    const savingsRows = filteredSavings
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map(saving => ([
+        new Date(saving.month).toLocaleDateString('en-US', { year: 'numeric', month: 'long' }),
+        formatCurrency(saving.amount),
+        saving.createdAt ? new Date(saving.createdAt).toLocaleDateString() : ''
+      ]));
+
+    const loanRows = filteredLoans
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map(loan => ([
+        formatCurrency(loan.amount),
+        `${loan.duration} months`,
+        loan.status,
+        loan.createdAt ? new Date(loan.createdAt).toLocaleDateString() : '',
+        formatCurrency(loan.balance || loan.amount)
+      ]));
+
+    const interestRows = filteredLedger
+      .filter(entry => entry.type === 'InterestPayout')
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map(entry => ([
+        entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
+        formatCurrency(entry.amount || 0),
+        entry.notes || ''
+      ]));
+
+    const totalSavingsInRange = filteredSavings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
+    const totalInterestPaid = filteredLedger
+      .filter(entry => entry.type === 'InterestPayout')
+      .reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
+    const { doc, cursorY: startY } = createPdfDoc({
+      title: 'Member Financial Report',
+      subtitle: memberData.member?.name || '',
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`,
+        `Membership #: ${memberData.member?.membershipNumber || ''}`
+      ]
+    });
+
+    let cursorY = startY;
+    cursorY = addSectionTitle(doc, cursorY, 'Summary');
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Savings (Range)', value: formatCurrency(totalSavingsInRange) },
+      { label: 'Total Interest Paid', value: formatCurrency(totalInterestPaid) },
+      { label: 'Active Loans', value: filteredLoans.filter(loan => loan.status === 'active').length }
+    ]);
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Savings');
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Month', 'Amount', 'Recorded'],
+      savingsRows.length ? savingsRows : [['No savings in range', '', '']]
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Loans');
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Amount', 'Duration', 'Status', 'Applied', 'Balance'],
+      loanRows.length ? loanRows : [['No loans in range', '', '', '', '']]
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Interest Distribution');
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Amount', 'Notes'],
+      interestRows.length ? interestRows : [['No interest payouts', '', '']]
+    );
+
+    savePdf(doc, `member-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const generateYearlyBreakdown = () => {
     const years = [...new Set(memberData.savings.map(saving => 
       new Date(saving.month).getFullYear()
@@ -124,7 +261,7 @@ const MemberReports = () => {
   };
 
   const exportToCSV = (data, filename) => {
-    if (!data || (Array.isArray(data) && data.length === 0)) {
+    if (filename !== 'financial-statement' && (!data || (Array.isArray(data) && data.length === 0))) {
       toast.error('No data to export');
       return;
     }
@@ -133,10 +270,34 @@ const MemberReports = () => {
     
     if (filename === 'financial-statement') {
       // Generate comprehensive financial statement
-      const statement = generateFinancialStatement();
+      const totalSavings = filteredSavings.reduce((total, saving) => total + saving.amount, 0);
+      const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
+      const totalLoanAmount = activeLoans.reduce((total, loan) => total + loan.amount, 0);
+      const totalLoanBalance = activeLoans.reduce((total, loan) => total + (loan.balance || loan.amount), 0);
+      const loanEligibility = totalSavings * 0.8;
+      const availableCredit = Math.max(0, loanEligibility - totalLoanBalance);
+      const statement = {
+        memberInfo: {
+          name: memberData.member?.name || '',
+          membershipNumber: memberData.member?.membershipNumber || '',
+          email: memberData.member?.email || '',
+          joinDate: memberData.member?.joinDate || ''
+        },
+        financialSummary: {
+          totalSavings,
+          loanEligibility,
+          totalLoans: filteredLoans.length,
+          activeLoans: activeLoans.length,
+          totalLoanAmount,
+          totalLoanBalance,
+          availableCredit
+        }
+      };
       
       csvContent = [
         'FINANCIAL STATEMENT',
+        '',
+        `Report Range,${reportRangeLabel()}`,
         '',
         'MEMBER INFORMATION',
         `Name,${statement.memberInfo.name}`,
@@ -155,7 +316,7 @@ const MemberReports = () => {
         'Month,Amount,Date Recorded'
       ].join('\n');
       
-      const savingsData = memberData.savings
+      const savingsData = filteredSavings
         .sort((a, b) => new Date(b.month) - new Date(a.month))
         .map(saving => 
           `${new Date(saving.month).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })},${saving.amount},${new Date(saving.createdAt).toLocaleDateString()}`
@@ -163,11 +324,11 @@ const MemberReports = () => {
       
       csvContent += '\n' + savingsData.join('\n');
       
-      if (memberData.loans.length > 0) {
+      if (filteredLoans.length > 0) {
         csvContent += '\n\nLOAN HISTORY\n';
         csvContent += 'Amount,Duration,Purpose,Status,Applied Date,Balance\n';
         
-        const loansData = memberData.loans
+        const loansData = filteredLoans
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
           .map(loan => 
             `${loan.amount},${loan.duration} months,"${loan.purpose || 'N/A'}",${loan.status},${new Date(loan.createdAt).toLocaleDateString()},${loan.balance || loan.amount}`
@@ -220,6 +381,45 @@ const MemberReports = () => {
         </p>
       </div>
 
+      <div className="card mb-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Report Date Range</h3>
+            <p className="text-sm text-gray-500">Applies to PDF and CSV exports.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start date</label>
+              <input
+                type="date"
+                className="form-input"
+                value={reportStartDate}
+                onChange={(e) => setReportStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End date</label>
+              <input
+                type="date"
+                className="form-input"
+                value={reportEndDate}
+                onChange={(e) => setReportEndDate(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn-secondary h-11 mt-6"
+              onClick={() => {
+                setReportStartDate('');
+                setReportEndDate('');
+              }}
+            >
+              Clear Range
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Member Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <div className="card">
@@ -254,6 +454,13 @@ const MemberReports = () => {
           <h3 className="text-lg font-medium text-gray-900 mb-4">Financial Reports</h3>
           <div className="space-y-4">
             <button
+              onClick={exportMemberPdf}
+              className="w-full flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Download Member Report (PDF)
+            </button>
+            <button
               onClick={() => exportToCSV(null, 'financial-statement')}
               className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -262,7 +469,7 @@ const MemberReports = () => {
             </button>
             <button
               onClick={() => exportToCSV(
-                memberData.savings.map(saving => ({
+                filteredSavings.map(saving => ({
                   month: new Date(saving.month).toLocaleDateString('en-US', { year: 'numeric', month: 'long' }),
                   amount: saving.amount,
                   dateRecorded: new Date(saving.createdAt).toLocaleDateString()
@@ -282,7 +489,7 @@ const MemberReports = () => {
           <div className="space-y-4">
             <button
               onClick={() => exportToCSV(
-                memberData.loans.map(loan => ({
+                filteredLoans.map(loan => ({
                   amount: loan.amount,
                   duration: `${loan.duration} months`,
                   purpose: loan.purpose || 'N/A',
@@ -293,13 +500,13 @@ const MemberReports = () => {
                 'loan-history'
               )}
               className="w-full flex items-center justify-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
-              disabled={memberData.loans.length === 0}
+              disabled={filteredLoans.length === 0}
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Download Loan History
             </button>
             <div className="text-sm text-gray-500 text-center">
-              {memberData.loans.length === 0 ? 'No loans to export' : `${memberData.loans.length} loan(s) available`}
+              {filteredLoans.length === 0 ? 'No loans to export' : `${filteredLoans.length} loan(s) available`}
             </div>
           </div>
         </div>
