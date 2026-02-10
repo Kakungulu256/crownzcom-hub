@@ -5,12 +5,14 @@ import { formatCurrency } from '../../utils/financial';
 import toast from 'react-hot-toast';
 import { listAllDocuments } from '../../lib/pagination';
 import { createLedgerEntry } from '../../lib/ledger';
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 const ExpensesManagement = () => {
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [expenseLoading, setExpenseLoading] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
   const [formData, setFormData] = useState({
     description: '',
     amount: '',
@@ -58,38 +60,100 @@ const ExpensesManagement = () => {
         date: new Date(formData.date).toISOString(),
         createdAt: new Date().toISOString()
       };
-      await databases.createDocument(
-        DATABASE_ID,
-        COLLECTIONS.EXPENSES,
-        ID.unique(),
-        payload
-      );
-      const month = payload.date.slice(0, 7);
-      await createLedgerEntry({
-        databases,
-        DATABASE_ID,
-        COLLECTIONS,
-        entry: {
-          type: 'Expense',
-          amount: payload.amount,
-          month,
-          year: parseInt(month.split('-')[0], 10),
-          notes: `${payload.category}${payload.description ? ` - ${payload.description}` : ''}`
+      if (editingExpense) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.EXPENSES,
+          editingExpense.$id,
+          payload
+        );
+        const month = payload.date.slice(0, 7);
+        const delta = payload.amount - (editingExpense.amount || 0);
+        if (delta !== 0) {
+          await createLedgerEntry({
+            databases,
+            DATABASE_ID,
+            COLLECTIONS,
+            entry: {
+              type: 'Expense',
+              amount: delta,
+              month,
+              year: parseInt(month.split('-')[0], 10),
+              notes: `Adjustment (edit) - ${payload.category}${payload.description ? ` - ${payload.description}` : ''}`
+            }
+          });
         }
-      });
-      toast.success('Expense added successfully');
+        toast.success('Expense updated successfully');
+      } else {
+        await databases.createDocument(
+          DATABASE_ID,
+          COLLECTIONS.EXPENSES,
+          ID.unique(),
+          payload
+        );
+        const month = payload.date.slice(0, 7);
+        await createLedgerEntry({
+          databases,
+          DATABASE_ID,
+          COLLECTIONS,
+          entry: {
+            type: 'Expense',
+            amount: payload.amount,
+            month,
+            year: parseInt(month.split('-')[0], 10),
+            notes: `${payload.category}${payload.description ? ` - ${payload.description}` : ''}`
+          }
+        });
+        toast.success('Expense added successfully');
+      }
       setFormData({
         description: '',
         amount: '',
         category: 'operational',
         date: new Date().toISOString().split('T')[0]
       });
+      setEditingExpense(null);
       setShowForm(false);
       fetchExpenses();
     } catch (error) {
-      toast.error('Failed to add expense');
+      toast.error(editingExpense ? 'Failed to update expense' : 'Failed to add expense');
     } finally {
       setExpenseLoading(false);
+    }
+  };
+
+  const handleEdit = (expense) => {
+    setEditingExpense(expense);
+    setFormData({
+      description: expense.description || '',
+      amount: String(expense.amount || ''),
+      category: expense.category || 'operational',
+      date: expense.date ? new Date(expense.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (expense) => {
+    if (!confirm('Delete this expense?')) return;
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.EXPENSES, expense.$id);
+      const month = expense.date ? expense.date.slice(0, 7) : new Date().toISOString().slice(0, 7);
+      await createLedgerEntry({
+        databases,
+        DATABASE_ID,
+        COLLECTIONS,
+        entry: {
+          type: 'Expense',
+          amount: -(expense.amount || 0),
+          month,
+          year: parseInt(month.split('-')[0], 10),
+          notes: `Reversal (delete) - ${expense.category}${expense.description ? ` - ${expense.description}` : ''}`
+        }
+      });
+      toast.success('Expense deleted');
+      fetchExpenses();
+    } catch (error) {
+      toast.error('Failed to delete expense');
     }
   };
 
@@ -141,7 +205,9 @@ const ExpensesManagement = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg w-full max-w-md">
-            <h3 className="text-lg font-medium mb-4">Add Expense</h3>
+            <h3 className="text-lg font-medium mb-4">
+              {editingExpense ? 'Edit Expense' : 'Add Expense'}
+            </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -197,12 +263,21 @@ const ExpensesManagement = () => {
                   {expenseLoading ? (
                     <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                   ) : (
-                    'Add Expense'
+                    editingExpense ? 'Update Expense' : 'Add Expense'
                   )}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingExpense(null);
+                    setFormData({
+                      description: '',
+                      amount: '',
+                      category: 'operational',
+                      date: new Date().toISOString().split('T')[0]
+                    });
+                  }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
                   disabled={expenseLoading}
                 >
@@ -223,6 +298,7 @@ const ExpensesManagement = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -241,6 +317,24 @@ const ExpensesManagement = () => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                   {formatCurrency(expense.amount)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleEdit(expense)}
+                      className="p-2 text-blue-600 hover:text-blue-800"
+                      title="Edit"
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(expense)}
+                      className="p-2 text-red-600 hover:text-red-800"
+                      title="Delete"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

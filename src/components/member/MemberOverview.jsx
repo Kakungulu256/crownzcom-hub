@@ -64,6 +64,7 @@ const MemberOverview = () => {
         .filter(loan => loan.status === 'active' || loan.status === 'approved')
         .reduce((sum, loan) => sum + (loan.balance || loan.amount), 0);
       const availableCredit = calculateAvailableCredit(totalSavings, activeLoanAmount, eligibilityPercent);
+      const availableBalance = Math.max(0, totalSavings - activeLoanAmount);
       
       const loanIds = new Set(loans.map(l => l.$id));
       const memberRepayments = repayments.filter(r => loanIds.has(r.loanId?.$id || r.loanId));
@@ -77,7 +78,8 @@ const MemberOverview = () => {
         totalSavings,
         activeLoans,
         loanEligibility,
-        availableCredit
+        availableCredit,
+        availableBalance
       });
 
       const now = new Date();
@@ -164,7 +166,7 @@ const MemberOverview = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5 mb-8">
         <div className="bg-white overflow-hidden shadow rounded-2xl border border-slate-100">
           <div className="p-5">
             <div className="flex items-center">
@@ -224,6 +226,28 @@ const MemberOverview = () => {
                   </dt>
                   <dd className="text-lg font-medium text-gray-900">
                     {formatCurrency(memberData.availableCredit)}
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white overflow-hidden shadow rounded-2xl border border-slate-100">
+          <div className="p-5">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="p-3 rounded-xl bg-teal-500">
+                  <BanknotesIcon className="h-6 w-6 text-white" />
+                </div>
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="text-sm font-medium text-gray-500 truncate">
+                    Available Balance
+                  </dt>
+                  <dd className="text-lg font-medium text-gray-900">
+                    {formatCurrency(memberData.availableBalance || 0)}
                   </dd>
                 </dl>
               </div>

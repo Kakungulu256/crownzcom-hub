@@ -25,12 +25,12 @@ const Login = () => {
       <div className="max-w-md w-full">
         <div className="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100">
           <div className="text-center mb-8">
-            {/* <div className="mx-auto h-16 w-16 rounded-2xl flex items-center justify-center mb-4 bg-[#0B1220]">
+            <div className="mx-auto h-16 w-16 rounded-2xl flex items-center justify-center mb-4 bg-[#0B1220]">
               <img src="../public/logo.png" alt="club-logo" className="h-12 w-12 object-contain" />
             </div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">
               Crownzcom Investemt Club
-            </h2> */}
+            </h2>
             <p className="text-gray-600">
               Sign in to your account
             </p>

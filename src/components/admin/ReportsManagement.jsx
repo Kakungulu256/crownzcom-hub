@@ -27,8 +27,6 @@ const ReportsManagement = () => {
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState('');
-  const [statementYear, setStatementYear] = useState(new Date().getFullYear());
-  const [statementMonth, setStatementMonth] = useState('');
   const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [cashEntryForm, setCashEntryForm] = useState({
     amount: '',
@@ -350,7 +348,7 @@ const ReportsManagement = () => {
       `Total Members: ${financialSummary.totalMembers}`,
       `Report Range: ${reportRangeLabel()}`
     ];
-    const { doc, cursorY: startY } = createPdfDoc({
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'AGM Financial Summary',
       subtitle: 'Crownzcom Investment Club',
       meta
@@ -364,7 +362,7 @@ const ReportsManagement = () => {
     const totalLiabilities = financialSummary.totalSavings;
     const totalEquity = totalAssets - totalLiabilities;
 
-    cursorY = addSectionTitle(doc, cursorY, 'Balance Sheet (Statement of Financial Position)');
+    cursorY = addSectionTitle(doc, cursorY, 'Balance Sheet (Statement of Financial Position)', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Assets - Cash at Bank (Manual)', value: formatCurrency(financialSummary.cashAtBank) },
       { label: 'Assets - Loans Receivable', value: formatCurrency(financialSummary.portfolioValue) },
@@ -374,7 +372,7 @@ const ReportsManagement = () => {
       { label: 'Total Liabilities', value: formatCurrency(totalLiabilities) },
       { label: 'Equity - Retained Earnings / Unreconciled Difference', value: formatCurrency(totalEquity) },
       { label: 'Total Equity', value: formatCurrency(totalEquity) }
-    ]);
+    ], pdfMeta);
 
     const totalIncome =
       financialSummary.totalSubscriptions +
@@ -388,7 +386,7 @@ const ReportsManagement = () => {
     const netIncome = totalIncome - totalExpenses;
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Statement of Income & Expenditure)');
+    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Statement of Income & Expenditure)', pdfMeta);
     cursorY = addSimpleTable(
       doc,
       cursorY,
@@ -404,17 +402,18 @@ const ReportsManagement = () => {
         ['Expense - Interest Payouts', formatCurrency(financialSummary.totalInterestPayouts)],
         ['Total Expenses', formatCurrency(totalExpenses)],
         ['Net Income', formatCurrency(netIncome)]
-      ]
+      ],
+      pdfMeta
     );
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Notes & Schedules - Loan Portfolio Summary');
+    cursorY = addSectionTitle(doc, cursorY, 'Notes & Schedules - Loan Portfolio Summary', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
       { label: 'Total Repaid', value: formatCurrency(financialSummary.totalLoanRepayments) },
       { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
       { label: 'Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) }
-    ]);
+    ], pdfMeta);
 
     savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -433,7 +432,7 @@ const ReportsManagement = () => {
       ];
     });
 
-    const { doc, cursorY: startY } = createPdfDoc({
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Cash at Bank Statement',
       subtitle: 'Manual Entries',
       meta: [
@@ -447,7 +446,8 @@ const ReportsManagement = () => {
       doc,
       cursorY,
       ['Date', 'Type', 'Amount', 'Running Balance', 'Description'],
-      tableRows
+      tableRows,
+      pdfMeta
     );
 
     savePdf(doc, `cash-at-bank-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -474,7 +474,7 @@ const ReportsManagement = () => {
       loan.status
     ]));
 
-    const { doc, cursorY: startY } = createPdfDoc({
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Loan Portfolio Summary',
       subtitle: 'Active Loans',
       meta: [`Generated: ${new Date().toLocaleString()}`]
@@ -485,13 +485,14 @@ const ReportsManagement = () => {
       { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
       { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
       { label: 'Active Loans', value: activeLoans.length }
-    ]);
+    ], pdfMeta);
     cursorY += 4;
     cursorY = addSimpleTable(
       doc,
       cursorY,
       ['Loan', 'Member', 'Amount', 'Balance', 'Status'],
-      tableRows
+      tableRows,
+      pdfMeta
     );
 
     savePdf(doc, `loan-portfolio-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -504,7 +505,7 @@ const ReportsManagement = () => {
       formatCurrency(member.totalSavings)
     ]));
 
-    const { doc, cursorY: startY } = createPdfDoc({
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Member Savings Summary',
       subtitle: 'Totals by Member',
       meta: [
@@ -519,7 +520,8 @@ const ReportsManagement = () => {
       doc,
       cursorY,
       ['Member', 'Membership #', 'Total Savings'],
-      rows
+      rows,
+      pdfMeta
     );
 
     savePdf(doc, `member-savings-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -535,7 +537,7 @@ const ReportsManagement = () => {
       entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : ''
     ]));
 
-    const { doc, cursorY: startY } = createPdfDoc({
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Interest Distribution Statement',
       subtitle: 'Loan + Trust Interest',
       meta: [
@@ -547,18 +549,19 @@ const ReportsManagement = () => {
     });
 
     let cursorY = startY;
-    cursorY = addSectionTitle(doc, cursorY, 'Payout Summary');
+    cursorY = addSectionTitle(doc, cursorY, 'Payout Summary', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Interest Payouts', value: formatCurrency(sumLedgerByTypes(['InterestPayout'])) }
-    ]);
+    ], pdfMeta);
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Payouts by Member');
+    cursorY = addSectionTitle(doc, cursorY, 'Payouts by Member', pdfMeta);
     cursorY = addSimpleTable(
       doc,
       cursorY,
       ['Member ID', 'Amount', 'Date'],
-      payoutRows
+      payoutRows,
+      pdfMeta
     );
 
     savePdf(doc, `interest-distribution-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -574,43 +577,170 @@ const ReportsManagement = () => {
       toast.error('Member not found');
       return;
     }
+    const resolveEntryDate = (entry) => {
+      if (entry.createdAt) return new Date(entry.createdAt);
+      if (entry.month) return new Date(`${entry.month}-01T00:00:00`);
+      if (entry.year) return new Date(`${entry.year}-01-01T00:00:00`);
+      return null;
+    };
+
     const memberLedger = filteredLedger
       .filter(entry => normalizeMemberId(entry.memberId) === selectedMemberId)
       .filter(entry => {
-        if (!entry.createdAt) return true;
-        const entryDate = new Date(entry.createdAt);
-        const matchesYear = entryDate.getFullYear() === parseInt(statementYear, 10);
-        if (!matchesYear) return false;
-        if (!statementMonth) return true;
-        return entryDate.getMonth() + 1 === parseInt(statementMonth, 10);
+        const entryDate = resolveEntryDate(entry);
+        if (!entryDate) return false;
+        return isWithinRange(entryDate.toISOString());
       });
-    const rows = memberLedger
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-      .map(entry => ([
-        entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
-        entry.type,
-        entry.amount ? formatCurrency(entry.amount) : formatCurrency(0),
-        entry.notes || ''
-      ]));
+    const sortedLedger = memberLedger
+      .slice()
+      .sort((a, b) => resolveEntryDate(a) - resolveEntryDate(b));
 
-    const { doc, cursorY: startY } = createPdfDoc({
+    const savingsEntries = sortedLedger.filter(entry => entry.type === 'Savings');
+    const repaymentEntries = sortedLedger.filter(entry => entry.type === 'LoanRepayment');
+    const transferChargeEntries = sortedLedger.filter(entry => entry.type === 'TransferCharge');
+    const interestPayoutEntries = sortedLedger.filter(entry => entry.type === 'InterestPayout');
+
+    const activeLoans = filteredLoans.filter(loan => loan.status === 'active' && normalizeMemberId(loan.memberId) === selectedMemberId);
+    const completedLoans = filteredLoans.filter(loan => loan.status === 'completed' && normalizeMemberId(loan.memberId) === selectedMemberId);
+
+    const savingsRows = savingsEntries.map(entry => ([
+      resolveEntryDate(entry) ? resolveEntryDate(entry).toLocaleDateString() : '',
+      entry.notes || 'Savings',
+      formatCurrency(entry.amount || 0)
+    ]));
+
+    const repaymentRows = repaymentEntries.map(entry => ([
+      resolveEntryDate(entry) ? resolveEntryDate(entry).toLocaleDateString() : '',
+      entry.loanId ? getLoanLabel(entry.loanId) : 'Loan',
+      formatCurrency(entry.amount || 0)
+    ]));
+
+    const chargeRows = transferChargeEntries.map(entry => ([
+      resolveEntryDate(entry) ? resolveEntryDate(entry).toLocaleDateString() : '',
+      entry.loanId ? getLoanLabel(entry.loanId) : 'Loan',
+      formatCurrency(entry.amount || 0),
+      entry.notes || ''
+    ]));
+
+    const interestRows = interestPayoutEntries.map(entry => ([
+      resolveEntryDate(entry) ? resolveEntryDate(entry).toLocaleDateString() : '',
+      formatCurrency(entry.amount || 0),
+      entry.notes || ''
+    ]));
+
+    const periodLabel = reportRangeLabel();
+
+    const totalAmount = memberLedger.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Member Statement of Account',
-      subtitle: `${member.name} (${member.membershipNumber})`,
+      subtitle: member.name,
       meta: [
         `Generated: ${new Date().toLocaleString()}`,
         `Report Range: ${reportRangeLabel()}`,
-        `Member: ${member.name}`,
         `Membership #: ${member.membershipNumber}`,
-        `Period: ${statementYear}${statementMonth ? `-${String(statementMonth).padStart(2, '0')}` : ''}`
+        `Period: ${periodLabel}`
       ]
     });
 
     let cursorY = startY;
+    cursorY = addSectionTitle(doc, cursorY, 'Totals', pdfMeta, 4);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Entries', value: memberLedger.length },
+      { label: 'Net Amount', value: formatCurrency(totalAmount) }
+    ], pdfMeta);
+    cursorY += 4;
+
+    cursorY = addSectionTitle(doc, cursorY, 'Savings', pdfMeta, 5);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Savings', value: formatCurrency(savingsEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0)) }
+    ], pdfMeta);
     cursorY = addSimpleTable(
       doc,
       cursorY,
-      ['Date', 'Type', 'Amount', 'Description'],
-      rows
+      ['Date', 'Description', 'Amount'],
+      savingsRows.length ? savingsRows : [['No savings entries', '', '']],
+      pdfMeta
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Loans - Active', pdfMeta, 5);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Active Loans', value: activeLoans.length },
+      { label: 'Active Balance', value: formatCurrency(activeLoans.reduce((sum, loan) => sum + (loan.balance || loan.amount || 0), 0)) }
+    ], pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Loan', 'Amount', 'Balance', 'Applied'],
+      activeLoans.length
+        ? activeLoans.map(loan => ([
+            getLoanLabel(loan.$id),
+            formatCurrency(loan.amount || 0),
+            formatCurrency(loan.balance || loan.amount || 0),
+            loan.createdAt ? new Date(loan.createdAt).toLocaleDateString() : ''
+          ]))
+        : [['No active loans', '', '', '']],
+      pdfMeta
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Loans - Completed', pdfMeta, 5);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Completed Loans', value: completedLoans.length },
+      { label: 'Total Completed Amount', value: formatCurrency(completedLoans.reduce((sum, loan) => sum + (loan.amount || 0), 0)) }
+    ], pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Loan', 'Amount', 'Completed'],
+      completedLoans.length
+        ? completedLoans.map(loan => ([
+            getLoanLabel(loan.$id),
+            formatCurrency(loan.amount || 0),
+            loan.updatedAt ? new Date(loan.updatedAt).toLocaleDateString() : ''
+          ]))
+        : [['No completed loans', '', '']],
+      pdfMeta
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Loan Repayments', pdfMeta, 4);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Repayments', value: formatCurrency(repaymentEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0)) }
+    ], pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Loan', 'Amount'],
+      repaymentRows.length ? repaymentRows : [['No repayments', '', '']],
+      pdfMeta
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Transfer Charges', pdfMeta, 4);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Charges', value: formatCurrency(transferChargeEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0)) }
+    ], pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Loan', 'Amount', 'Description'],
+      chargeRows.length ? chargeRows : [['No transfer charges', '', '', '']],
+      pdfMeta
+    );
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Interest Payouts', pdfMeta, 4);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Interest Paid', value: formatCurrency(interestPayoutEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0)) }
+    ], pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Date', 'Amount', 'Notes'],
+      interestRows.length ? interestRows : [['No interest payouts', '', '']],
+      pdfMeta
     );
 
     savePdf(doc, `member-statement-${member.membershipNumber || member.$id}-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -940,34 +1070,28 @@ const ReportsManagement = () => {
               <option value="">Select member</option>
               {reportData.members.map(member => (
                 <option key={member.$id} value={member.$id}>
-                  {member.name} ({member.membershipNumber})
+                  {member.name}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Start date</label>
             <input
-              type="number"
+              type="date"
               className="form-input"
-              value={statementYear}
-              onChange={(e) => setStatementYear(parseInt(e.target.value, 10) || new Date().getFullYear())}
+              value={reportStartDate}
+              onChange={(e) => setReportStartDate(e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Month (optional)</label>
-            <select
+            <label className="block text-sm font-medium text-gray-700 mb-1">End date</label>
+            <input
+              type="date"
               className="form-input"
-              value={statementMonth}
-              onChange={(e) => setStatementMonth(e.target.value)}
-            >
-              <option value="">All months</option>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map(month => (
-                <option key={month} value={month}>
-                  {String(month).padStart(2, '0')}
-                </option>
-              ))}
-            </select>
+              value={reportEndDate}
+              onChange={(e) => setReportEndDate(e.target.value)}
+            />
           </div>
           <button
             onClick={exportMemberStatementPdf}

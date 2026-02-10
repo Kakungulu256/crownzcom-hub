@@ -14,6 +14,7 @@ const MembersManagement = () => {
   const [editingMember, setEditingMember] = useState(null);
   const [selectedMember, setSelectedMember] = useState(null);
   const [showMemberDetails, setShowMemberDetails] = useState(false);
+  const [isSavingMember, setIsSavingMember] = useState(false);
   const [memberDetails, setMemberDetails] = useState({
     savings: [],
     loans: [],
@@ -44,6 +45,7 @@ const MembersManagement = () => {
 
   const onSubmit = async (data) => {
   try {
+    setIsSavingMember(true);
     if (editingMember) {
       // Update existing member
       await databases.updateDocument(DATABASE_ID, COLLECTIONS.MEMBERS, editingMember.$id, {
@@ -51,7 +53,7 @@ const MembersManagement = () => {
         email: data.email,
         phone: data.phone,
         membershipNumber: data.membershipNumber,
-        joinDate: data.joinDate ? new Date(data.joinDate).toISOString() : editingMember.joinDate
+        joinDate: data.joinDate || editingMember.joinDate || null
       });
       toast.success('Member updated successfully');
     } else {
@@ -65,7 +67,7 @@ const MembersManagement = () => {
             password: data.password,
             phone: data.phone,
             membershipNumber: data.membershipNumber,
-            joinDate: data.joinDate
+            joinDate: data.joinDate || new Date().toISOString().split('T')[0]
           })
         );
         
@@ -88,7 +90,7 @@ const MembersManagement = () => {
           email: data.email,
           phone: data.phone,
           membershipNumber: data.membershipNumber,
-          joinDate: data.joinDate ? new Date(data.joinDate).toISOString() : new Date().toISOString(),
+          joinDate: data.joinDate || new Date().toISOString().split('T')[0],
           status: 'active'
         };
         
@@ -104,6 +106,8 @@ const MembersManagement = () => {
   } catch (error) {
     toast.error(editingMember ? 'Failed to update member' : 'Failed to add member');
     console.error('Error saving member:', error);
+  } finally {
+    setIsSavingMember(false);
   }
 };
 
@@ -156,11 +160,27 @@ const MembersManagement = () => {
     setShowAddForm(true);
   };
 
-  const handleDelete = async (memberId) => {
+  const handleDelete = async (member) => {
     if (!confirm('Are you sure you want to delete this member?')) return;
     
     try {
-      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.MEMBERS, memberId);
+      try {
+        const response = await functions.createExecution(
+          import.meta.env.VITE_APPWRITE_FUNCTION_ID,
+          JSON.stringify({
+            action: 'delete',
+            memberId: member.$id,
+            authUserId: member.authUserId || null
+          })
+        );
+        const result = JSON.parse(response.responseBody || '{}');
+        if (!result.success) {
+          throw new Error(result.error || 'Deletion function failed');
+        }
+      } catch (functionError) {
+        console.warn('Function failed, deleting member record only:', functionError);
+        await databases.deleteDocument(DATABASE_ID, COLLECTIONS.MEMBERS, member.$id);
+      }
       toast.success('Member deleted successfully');
       fetchMembers();
     } catch (error) {
@@ -314,11 +334,15 @@ const MembersManagement = () => {
                 type="button"
                 onClick={cancelForm}
                 className="btn-secondary"
+                disabled={isSavingMember}
               >
                 Cancel
               </button>
-              <button type="submit" className="btn-primary">
-                {editingMember ? 'Update Member' : 'Add Member'}
+              <button type="submit" className="btn-primary flex items-center justify-center" disabled={isSavingMember}>
+                {isSavingMember && (
+                  <span className="mr-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" />
+                )}
+                {editingMember ? (isSavingMember ? 'Updating...' : 'Update Member') : (isSavingMember ? 'Adding...' : 'Add Member')}
               </button>
             </div>
           </form>
@@ -405,7 +429,7 @@ const MembersManagement = () => {
                         <EyeIcon className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => handleDelete(member.$id)}
+                        onClick={() => handleDelete(member)}
                         className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors"
                       >
                         <TrashIcon className="h-4 w-4" />

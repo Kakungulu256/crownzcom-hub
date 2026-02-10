@@ -13,11 +13,46 @@ module.exports = async ({ req, res, log, error }) => {
   let userId = null;
 
   try {
-    const { name, email, password, phone, membershipNumber, joinDate } = JSON.parse(req.body);
+    const {
+      action,
+      name,
+      email,
+      password,
+      phone,
+      membershipNumber,
+      joinDate,
+      memberId,
+      authUserId
+    } = JSON.parse(req.body);
 
     // Log environment variables (without sensitive data)
     log('DATABASE_ID: ' + process.env.DATABASE_ID);
     log('MEMBERS_COLLECTION_ID: ' + process.env.MEMBERS_COLLECTION_ID);
+
+    if (action === 'delete') {
+      if (authUserId) {
+        await users.delete(authUserId);
+        log('Auth user deleted: ' + authUserId);
+      } else {
+        log('No authUserId provided; skipping auth deletion.');
+      }
+
+      if (memberId) {
+        await databases.deleteDocument(
+          process.env.DATABASE_ID,
+          process.env.MEMBERS_COLLECTION_ID,
+          memberId
+        );
+        log('Member document deleted: ' + memberId);
+      } else {
+        log('No memberId provided; skipping member deletion.');
+      }
+
+      return res.json({
+        success: true,
+        message: 'Member deletion processed'
+      });
+    }
 
     log('Creating user in Auth...');
     const user = await users.create(
@@ -36,7 +71,7 @@ module.exports = async ({ req, res, log, error }) => {
       phone,
       membershipNumber,
       authUserId: user.$id,
-      joinDate: joinDate ? new Date(joinDate).toISOString() : new Date().toISOString(),
+      joinDate: joinDate || new Date().toISOString().split('T')[0],
       status: 'active'
     };
 

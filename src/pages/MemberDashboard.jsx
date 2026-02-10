@@ -61,7 +61,11 @@ const MemberDashboard = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
-                {sidebarOpen && <h1 className="text-xl font-bold text-white">SACCO Member</h1>}
+                {sidebarOpen && (
+                  <h1 className="text-xl font-bold text-white">
+                    {user?.name ? `Welcome, ${user.name}` : 'Welcome'}
+                  </h1>
+                )}
               </div>
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}

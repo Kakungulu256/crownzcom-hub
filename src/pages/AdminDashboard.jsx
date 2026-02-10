@@ -8,7 +8,6 @@ import {
   CreditCardIcon,
   DocumentChartBarIcon,
   Cog6ToothIcon,
-  CurrencyDollarIcon,
   ReceiptPercentIcon,
   CreditCardIcon as SubscriptionIcon,
   ArrowRightOnRectangleIcon
@@ -46,7 +45,7 @@ const AdminDashboard = () => {
     { name: 'Savings', href: '/admin/savings', icon: BanknotesIcon },
     { name: 'Loans', href: '/admin/loans', icon: CreditCardIcon },
     { name: 'Subscriptions', href: '/admin/subscriptions', icon: SubscriptionIcon },
-    { name: 'Unit Trust', href: '/admin/unit-trust', icon: CurrencyDollarIcon },
+    { name: 'Unit Trust', href: '/admin/unit-trust', icon: BanknotesIcon },
     { name: 'Expenses', href: '/admin/expenses', icon: ReceiptPercentIcon },
     { name: 'Reports', href: '/admin/reports', icon: DocumentChartBarIcon },
     { name: 'Settings', href: '/admin/settings', icon: Cog6ToothIcon },
@@ -69,11 +68,9 @@ const AdminDashboard = () => {
             <div className="flex items-center justify-between h-20 px-4 bg-gradient-to-r from-blue-600 to-indigo-600">
               <div className="flex items-center space-x-3">
                 <div className="h-10 w-10 bg-white bg-opacity-20 rounded-xl flex items-center justify-center">
-                  <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-                  </svg>
+                  <span className="text-white font-semibold text-sm">IC</span>
                 </div>
-                {sidebarOpen && <h1 className="text-xl font-bold text-white">SACCO Admin</h1>}
+                {sidebarOpen && <h1 className="text-xl font-bold text-white">Investment Club Admin</h1>}
               </div>
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}

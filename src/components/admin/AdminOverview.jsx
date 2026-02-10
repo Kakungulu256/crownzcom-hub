@@ -11,6 +11,7 @@ const AdminOverview = () => {
     totalSavings: 0,
     activeLoans: 0,
     totalLoanAmount: 0,
+    availableBalance: 0,
     pendingLoans: 0,
     thisMonthRepayments: 0,
     thisMonthRepaymentAmount: 0
@@ -39,6 +40,7 @@ const AdminOverview = () => {
       );
       const pendingLoans = loans.filter(loan => loan.status === 'pending');
       const totalLoanAmount = activeLoans.reduce((sum, loan) => sum + loan.amount, 0);
+      const availableBalance = Math.max(0, totalSavings - totalLoanAmount);
 
       const now = new Date();
       const last7Days = new Date();
@@ -80,6 +82,7 @@ const AdminOverview = () => {
         totalSavings,
         activeLoans: activeLoans.length,
         totalLoanAmount,
+        availableBalance,
         pendingLoans: pendingLoans.length,
         thisMonthRepayments: thisMonthRepayments.length,
         thisMonthRepaymentAmount
@@ -120,6 +123,13 @@ const AdminOverview = () => {
       icon: ChartBarIcon,
       color: 'from-indigo-500 to-purple-600',
       bgColor: 'bg-indigo-50'
+    },
+    {
+      name: 'Available Balance',
+      value: formatCurrency(stats.availableBalance),
+      icon: BanknotesIcon,
+      color: 'from-teal-500 to-emerald-600',
+      bgColor: 'bg-teal-50'
     }
   ];
 
@@ -144,20 +154,17 @@ const AdminOverview = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 mb-8">
         {statCards.map((stat) => (
           <div key={stat.name} className={`stat-card ${stat.bgColor}`}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center">
               <div className="flex-1">
                 <p className="text-sm font-medium text-gray-600 mb-1">
                   {stat.name}
                 </p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-2xl font-bold text-gray-900 whitespace-nowrap overflow-hidden text-ellipsis">
                   {stat.value}
                 </p>
-              </div>
-              <div className={`p-3 rounded-2xl bg-gradient-to-r ${stat.color} shadow-lg`}>
-                <stat.icon className="h-6 w-6 text-white" />
               </div>
             </div>
           </div>

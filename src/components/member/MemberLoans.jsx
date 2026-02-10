@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { databases, DATABASE_ID, COLLECTIONS, Query } from '../../lib/appwrite';
+import { databases, DATABASE_ID, COLLECTIONS, Query, functions } from '../../lib/appwrite';
 import { useAuth } from '../../lib/auth';
 import { formatCurrency, validateLoanApplication, generateRepaymentSchedule, calculateAvailableCredit } from '../../utils/financial';
 import { PlusIcon, EyeIcon } from '@heroicons/react/24/outline';
@@ -24,6 +24,8 @@ const MemberLoans = () => {
   const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [applicationDate, setApplicationDate] = useState(new Date().toISOString().split('T')[0]);
   const [loanSubmitting, setLoanSubmitting] = useState(false);
+  const [earlyPayoffDate, setEarlyPayoffDate] = useState(new Date().toISOString().split('T')[0]);
+  const [earlyPayoffLoading, setEarlyPayoffLoading] = useState(false);
   
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm();
   const watchedAmount = watch('amount', 0);
@@ -208,6 +210,62 @@ const MemberLoans = () => {
     return loanRepayments
       .filter(repayment => normalizeLoanId(repayment.loanId) === targetId)
       .reduce((sum, repayment) => sum + (parseInt(repayment.amount) || 0), 0);
+  };
+
+  const getNextUnpaidMonth = (loan) => {
+    if (!loan?.repaymentPlan) return 1;
+    try {
+      const schedule = JSON.parse(loan.repaymentPlan);
+      const paidMonths = new Set(
+        loanRepayments
+          .filter(repayment => normalizeLoanId(repayment.loanId) === normalizeLoanId(loan.$id))
+          .map(repayment => parseInt(repayment.month))
+      );
+      const next = schedule.find(item => !paidMonths.has(parseInt(item.month)));
+      return next ? parseInt(next.month) : schedule.length;
+    } catch {
+      return 1;
+    }
+  };
+
+  const getEarlyPayoffAmount = (loan, monthNumber) => {
+    const interestRate = ((financialConfig.loanInterestRate || 0) + (financialConfig.earlyRepaymentPenalty || 0)) / 100;
+    const interestAmount = (loan.amount || 0) * interestRate;
+    const hasFirstMonthRepayment = loanRepayments.some(
+      repayment => normalizeLoanId(repayment.loanId) === normalizeLoanId(loan.$id) && parseInt(repayment.month) === 1
+    );
+    const chargeAmount = monthNumber === 1 && !hasFirstMonthRepayment ? getLoanChargeTotal(loan.$id) : 0;
+    const currentBalance = loan.balance || loan.amount || 0;
+    return Math.ceil(currentBalance + interestAmount + chargeAmount);
+  };
+
+  const requestEarlyPayoff = async () => {
+    if (!selectedLoan) return;
+    try {
+      setEarlyPayoffLoading(true);
+      const monthNumber = getNextUnpaidMonth(selectedLoan);
+      const response = await functions.createExecution(
+        import.meta.env.VITE_APPWRITE_LOAN_FUNCTION_ID,
+        JSON.stringify({
+          action: 'recordRepayment',
+          loanId: selectedLoan.$id,
+          month: monthNumber,
+          isEarlyPayment: true,
+          paidAt: earlyPayoffDate
+        })
+      );
+      const result = JSON.parse(response.responseBody || '{}');
+      if (!result.success) {
+        throw new Error(result.error || 'Early payoff failed');
+      }
+      toast.success('Early payoff recorded');
+      setSelectedLoan(null);
+      await fetchData();
+    } catch (error) {
+      toast.error(error.message || 'Failed to record early payoff');
+    } finally {
+      setEarlyPayoffLoading(false);
+    }
   };
 
   const getLoanOutstandingBalance = (loan) => {
@@ -620,6 +678,43 @@ const MemberLoans = () => {
                           </div>
                         );
                       })()}
+                    </div>
+                  </div>
+                )}
+
+                {selectedLoan.status === 'active' && (
+                  <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                    <label className="block text-sm font-medium text-gray-500 mb-2">Early Payoff</label>
+                    <div className="text-sm text-gray-700 mb-3">
+                      Select a date to pay off your remaining balance in full (includes the early repayment penalty).
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Payoff Date</label>
+                        <input
+                          type="date"
+                          className="form-input"
+                          value={earlyPayoffDate}
+                          onChange={(e) => setEarlyPayoffDate(e.target.value)}
+                        />
+                      </div>
+                      <div className="text-sm text-gray-700">
+                        <div className="text-xs text-gray-500">Estimated Payoff</div>
+                        <div className="font-semibold">
+                          {formatCurrency(getEarlyPayoffAmount(selectedLoan, getNextUnpaidMonth(selectedLoan)))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={requestEarlyPayoff}
+                        disabled={earlyPayoffLoading}
+                        className="btn-primary flex items-center justify-center"
+                      >
+                        {earlyPayoffLoading && (
+                          <span className="mr-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" />
+                        )}
+                        Pay Off Early
+                      </button>
                     </div>
                   </div>
                 )}

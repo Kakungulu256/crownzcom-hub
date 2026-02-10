@@ -5,12 +5,14 @@ import { formatCurrency } from '../../utils/financial';
 import toast from 'react-hot-toast';
 import { listAllDocuments } from '../../lib/pagination';
 import { createLedgerEntry } from '../../lib/ledger';
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 const UnitTrustManagement = () => {
   const [unitTrustRecords, setUnitTrustRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [unitTrustLoading, setUnitTrustLoading] = useState(false);
+  const [editingRecord, setEditingRecord] = useState(null);
   const [formData, setFormData] = useState({
     type: 'purchase',
     amount: '',
@@ -48,38 +50,100 @@ const UnitTrustManagement = () => {
         date: new Date(formData.date).toISOString(),
         createdAt: new Date().toISOString()
       };
-      await databases.createDocument(
-        DATABASE_ID,
-        COLLECTIONS.UNIT_TRUST,
-        ID.unique(),
-        payload
-      );
-      const month = payload.date.slice(0, 7);
-      await createLedgerEntry({
-        databases,
-        DATABASE_ID,
-        COLLECTIONS,
-        entry: {
-          type: 'UnitTrust',
-          amount: payload.amount,
-          month,
-          year: parseInt(month.split('-')[0], 10),
-          notes: `${payload.type}${payload.description ? ` - ${payload.description}` : ''}`
+      if (editingRecord) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.UNIT_TRUST,
+          editingRecord.$id,
+          payload
+        );
+        const month = payload.date.slice(0, 7);
+        const delta = payload.amount - (editingRecord.amount || 0);
+        if (delta !== 0) {
+          await createLedgerEntry({
+            databases,
+            DATABASE_ID,
+            COLLECTIONS,
+            entry: {
+              type: 'UnitTrust',
+              amount: delta,
+              month,
+              year: parseInt(month.split('-')[0], 10),
+              notes: `Adjustment (edit) - ${payload.type}${payload.description ? ` - ${payload.description}` : ''}`
+            }
+          });
         }
-      });
-      toast.success('Unit trust record added successfully');
+        toast.success('Unit trust record updated successfully');
+      } else {
+        await databases.createDocument(
+          DATABASE_ID,
+          COLLECTIONS.UNIT_TRUST,
+          ID.unique(),
+          payload
+        );
+        const month = payload.date.slice(0, 7);
+        await createLedgerEntry({
+          databases,
+          DATABASE_ID,
+          COLLECTIONS,
+          entry: {
+            type: 'UnitTrust',
+            amount: payload.amount,
+            month,
+            year: parseInt(month.split('-')[0], 10),
+            notes: `${payload.type}${payload.description ? ` - ${payload.description}` : ''}`
+          }
+        });
+        toast.success('Unit trust record added successfully');
+      }
       setFormData({
         type: 'purchase',
         amount: '',
         description: '',
         date: new Date().toISOString().split('T')[0]
       });
+      setEditingRecord(null);
       setShowForm(false);
       fetchUnitTrustRecords();
     } catch (error) {
-      toast.error('Failed to add unit trust record');
+      toast.error(editingRecord ? 'Failed to update unit trust record' : 'Failed to add unit trust record');
     } finally {
       setUnitTrustLoading(false);
+    }
+  };
+
+  const handleEdit = (record) => {
+    setEditingRecord(record);
+    setFormData({
+      type: record.type,
+      amount: String(record.amount || ''),
+      description: record.description || '',
+      date: record.date ? new Date(record.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (record) => {
+    if (!confirm('Delete this unit trust record?')) return;
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.UNIT_TRUST, record.$id);
+      const month = record.date ? record.date.slice(0, 7) : new Date().toISOString().slice(0, 7);
+      await createLedgerEntry({
+        databases,
+        DATABASE_ID,
+        COLLECTIONS,
+        entry: {
+          type: 'UnitTrust',
+          amount: -(record.amount || 0),
+          month,
+          year: parseInt(month.split('-')[0], 10),
+          notes: `Reversal (delete) - ${record.type}${record.description ? ` - ${record.description}` : ''}`
+        }
+      });
+      toast.success('Unit trust record deleted');
+      fetchUnitTrustRecords();
+    } catch (error) {
+      toast.error('Failed to delete unit trust record');
     }
   };
 
@@ -123,7 +187,9 @@ const UnitTrustManagement = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg w-full max-w-md">
-            <h3 className="text-lg font-medium mb-4">Add Unit Trust Transaction</h3>
+            <h3 className="text-lg font-medium mb-4">
+              {editingRecord ? 'Edit Unit Trust Transaction' : 'Add Unit Trust Transaction'}
+            </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
@@ -177,12 +243,21 @@ const UnitTrustManagement = () => {
                   {unitTrustLoading ? (
                     <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                   ) : (
-                    'Add Transaction'
+                    editingRecord ? 'Update Transaction' : 'Add Transaction'
                   )}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingRecord(null);
+                    setFormData({
+                      type: 'purchase',
+                      amount: '',
+                      description: '',
+                      date: new Date().toISOString().split('T')[0]
+                    });
+                  }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
                   disabled={unitTrustLoading}
                 >
@@ -203,6 +278,7 @@ const UnitTrustManagement = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -225,6 +301,24 @@ const UnitTrustManagement = () => {
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-900">
                   {record.description}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleEdit(record)}
+                      className="p-2 text-blue-600 hover:text-blue-800"
+                      title="Edit"
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(record)}
+                      className="p-2 text-red-600 hover:text-red-800"
+                      title="Delete"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

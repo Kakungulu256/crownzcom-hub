@@ -78,19 +78,23 @@ const FinancialConfiguration = () => {
       if (!COLLECTIONS.FINANCIAL_CONFIG) {
         throw new Error('Financial configuration collection is not set.');
       }
+      const payload = Object.keys(DEFAULT_FINANCIAL_CONFIG).reduce((acc, key) => {
+        acc[key] = config[key];
+        return acc;
+      }, {});
       if (configId) {
         await databases.updateDocument(
           DATABASE_ID,
           COLLECTIONS.FINANCIAL_CONFIG,
           configId,
-          config
+          payload
         );
       } else {
         const created = await databases.createDocument(
           DATABASE_ID,
           COLLECTIONS.FINANCIAL_CONFIG,
           ID.unique(),
-          config
+          payload
         );
         setConfigId(created.$id);
       }
