@@ -8,10 +8,16 @@ import { createPdfDoc, addSectionTitle, addKeyValueRows, addSimpleTable, savePdf
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 import { createLedgerEntry } from '../../lib/ledger';
 
+const INTEREST_CALCULATION_MODES = {
+  FLAT: 'flat',
+  REDUCING_BALANCE: 'reducing_balance'
+};
+
 const ReportsManagement = () => {
   const [reportData, setReportData] = useState({
     members: [],
     loans: [],
+    loanGuarantors: [],
     savings: [],
     loanRepayments: [],
     loanCharges: [],
@@ -27,6 +33,9 @@ const ReportsManagement = () => {
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState('');
+  const [portfolioMemberId, setPortfolioMemberId] = useState('');
+  const [portfolioMonthNumber, setPortfolioMonthNumber] = useState(1);
+  const [watermarkLogoData, setWatermarkLogoData] = useState('');
   const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [cashEntryForm, setCashEntryForm] = useState({
     amount: '',
@@ -39,11 +48,49 @@ const ReportsManagement = () => {
     fetchReportData();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement('canvas');
+      const size = 640;
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      const targetSize = size * 0.62;
+      const scale = Math.min(targetSize / image.width, targetSize / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      const x = (size - width) / 2;
+      const y = (size - height) / 2;
+
+      context.clearRect(0, 0, size, size);
+      context.globalAlpha = 0.08;
+      context.drawImage(image, x, y, width, height);
+      setWatermarkLogoData(canvas.toDataURL('image/png'));
+    };
+    image.onerror = () => {
+      if (!cancelled) setWatermarkLogoData('');
+    };
+    image.src = '/logo.png';
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const fetchReportData = async () => {
     try {
       const requests = [
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.MEMBERS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOANS),
+        COLLECTIONS.LOAN_GUARANTORS
+          ? listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_GUARANTORS)
+          : Promise.resolve([]),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
@@ -63,6 +110,7 @@ const ReportsManagement = () => {
       const [
         members,
         loans,
+        loanGuarantors,
         savings,
         loanRepayments,
         loanCharges,
@@ -77,6 +125,7 @@ const ReportsManagement = () => {
       setReportData({
         members,
         loans,
+        loanGuarantors,
         savings,
         loanRepayments,
         loanCharges,
@@ -96,6 +145,14 @@ const ReportsManagement = () => {
   };
 
   const normalizeMemberId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (value.$id) return value.$id;
+    if (Array.isArray(value) && value[0]?.$id) return value[0].$id;
+    return '';
+  };
+
+  const normalizeLoanId = (value) => {
     if (!value) return '';
     if (typeof value === 'string') return value;
     if (value.$id) return value.$id;
@@ -133,7 +190,8 @@ const ReportsManagement = () => {
   const filteredLedger = filterByDate(reportData.ledger, 'createdAt');
   const filteredSavings = filterByDate(reportData.savings, 'createdAt');
   const filteredLoans = filterByDate(reportData.loans, 'createdAt');
-  const filteredLoanRepayments = filterByDate(reportData.loanRepayments, 'createdAt');
+  const filteredLoanGuarantors = filterByDate(reportData.loanGuarantors, 'createdAt');
+  const filteredLoanRepayments = filterByDate(reportData.loanRepayments, 'paidAt');
   const filteredSubscriptions = filterByDate(reportData.subscriptions, 'createdAt');
   const filteredUnitTrust = filterByDate(reportData.unitTrust, 'createdAt');
   const filteredExpenses = filterByDate(reportData.expenses, 'createdAt');
@@ -170,6 +228,480 @@ const ReportsManagement = () => {
       return [];
     }
   };
+
+  const toInteger = (value, fallback = 0) => {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const clampNonNegative = (value) => Math.max(0, toInteger(value, 0));
+
+  const normalizeInterestCalculationMode = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      ? INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      : INTEREST_CALCULATION_MODES.FLAT;
+  };
+
+  const getLoanInterestCalculationMode = (loan) => normalizeInterestCalculationMode(
+    loan?.interestCalculationModeApplied || financialConfig.interestCalculationMode
+  );
+
+  const getLoanInterestModeLabel = (loan) => (
+    getLoanInterestCalculationMode(loan) === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      ? 'Reducing Balance'
+      : 'Flat Principal'
+  );
+
+  const getLoanMonthlyRatePercent = (loan) => {
+    const storedRate = Number(loan?.monthlyInterestRateApplied);
+    if (Number.isFinite(storedRate) && storedRate >= 0) return storedRate;
+    return loan?.loanType === 'long_term'
+      ? Number(financialConfig.longTermInterestRate || 1.5)
+      : Number(financialConfig.loanInterestRate || 2);
+  };
+
+  const getLoanInterestBasisLabel = (loan) => (
+    `${getLoanInterestModeLabel(loan)} @ ${getLoanMonthlyRatePercent(loan)}%`
+  );
+
+  const getLoanGuarantorRequests = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return filteredLoanGuarantors.filter((request) => normalizeLoanId(request.loanId) === target);
+  };
+
+  const getLoanGuarantorSettlement = (loan) => {
+    const requests = getLoanGuarantorRequests(loan.$id);
+    const approvedRequests = requests.filter((request) => request.status === 'approved');
+
+    const fallbackSecuredOriginal = approvedRequests.reduce(
+      (sum, request) => sum + clampNonNegative(request.approvedAmount ?? request.guaranteedAmount),
+      0
+    );
+    const securedOriginal = clampNonNegative(
+      loan.securedOriginalTotal ?? loan.guarantorApprovedAmount ?? fallbackSecuredOriginal
+    );
+
+    const fallbackSecuredOutstanding = approvedRequests.reduce(
+      (sum, request) => sum + clampNonNegative(request.securedOutstanding ?? request.approvedAmount ?? request.guaranteedAmount),
+      0
+    );
+    const securedOutstanding = clampNonNegative(
+      loan.securedOutstandingTotal ?? fallbackSecuredOutstanding
+    );
+    const normalizedOutstanding = Math.min(securedOriginal || securedOutstanding, securedOutstanding);
+
+    const recoveredFallback = Math.max(0, securedOriginal - normalizedOutstanding);
+    const guarantorRecovered = clampNonNegative(
+      loan.guarantorPrincipalRecoveredTotal ?? recoveredFallback
+    );
+    const guaranteedExposureExists = securedOriginal > 0;
+    const settlementPercent = guaranteedExposureExists
+      ? Math.max(0, Math.min(100, Math.round((guarantorRecovered / securedOriginal) * 100)))
+      : 0;
+    const allocationStatus = loan.repaymentAllocationStatus || (guaranteedExposureExists ? 'guarantor_priority' : 'not_required');
+
+    let settlementStage = 'N/A';
+    if (guaranteedExposureExists) {
+      if (normalizedOutstanding === 0) settlementStage = 'Settled';
+      else if (guarantorRecovered > 0) settlementStage = 'In Progress';
+      else if (allocationStatus === 'pending_guarantor') settlementStage = 'Pending';
+      else settlementStage = 'Not Started';
+    }
+
+    return {
+      requestCount: requests.length,
+      approvedCount: approvedRequests.length,
+      securedOriginal,
+      securedOutstanding: normalizedOutstanding,
+      guarantorRecovered,
+      settlementPercent,
+      allocationStatus,
+      settlementStage,
+      settlementCompletedAt: loan.guarantorSettlementCompletedAt || null
+    };
+  };
+
+  const getLoanChargeTotal = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return filteredLoanCharges
+      .filter(charge => normalizeLoanId(charge.loanId) === target)
+      .reduce((sum, charge) => sum + (parseInt(charge.amount, 10) || 0), 0);
+  };
+
+  const getLoanRepaymentsForLoan = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return filteredLoanRepayments
+      .filter(repayment => normalizeLoanId(repayment.loanId) === target)
+      .sort((a, b) => {
+        const aDate = new Date(a.paidAt || a.createdAt || a.$createdAt || 0).getTime();
+        const bDate = new Date(b.paidAt || b.createdAt || b.$createdAt || 0).getTime();
+        return aDate - bDate;
+      });
+  };
+
+  const getRepaymentForLoanMonth = (loanId, monthNumber) => {
+    return getLoanRepaymentsForLoan(loanId).find(
+      repayment => parseInt(repayment.month, 10) === parseInt(monthNumber, 10)
+    );
+  };
+
+  const getLoanMonthDueAmount = (loan, monthNumber) => {
+    const month = parseInt(monthNumber, 10);
+    const schedule = parseRepaymentPlan(loan);
+    const item = schedule.find(entry => parseInt(entry.month, 10) === month);
+    if (!item) return 0;
+    const hasFirstMonthRepayment = !!getRepaymentForLoanMonth(loan.$id, 1);
+    const chargeAmount = month === 1 && !hasFirstMonthRepayment ? getLoanChargeTotal(loan.$id) : 0;
+    return (parseInt(item.payment, 10) || 0) + chargeAmount;
+  };
+
+  const getLoanNextDue = (loan) => {
+    const schedule = parseRepaymentPlan(loan);
+    if (schedule.length === 0) return null;
+
+    const paidMonths = new Set(
+      getLoanRepaymentsForLoan(loan.$id).map(repayment => parseInt(repayment.month, 10))
+    );
+    const next = schedule.find(item => !paidMonths.has(parseInt(item.month, 10)));
+    if (!next) return null;
+    const month = parseInt(next.month, 10);
+    return {
+      month,
+      amount: getLoanMonthDueAmount(loan, month)
+    };
+  };
+
+  const getMemberSavingsTotal = (memberId) => (
+    hasLedgerData
+      ? sumMemberLedger(memberId, ['Savings'])
+      : sumMemberSavings(memberId)
+  );
+
+  const getLoanStartDate = (loan) => (
+    toDate(loan?.disbursedAt || loan?.createdAt || loan?.$createdAt)
+  );
+
+  const getLoanInstallmentDate = (loan, monthNumber) => {
+    const startDate = getLoanStartDate(loan);
+    const installment = parseInt(monthNumber, 10);
+    if (!startDate || !Number.isFinite(installment) || installment < 1) return null;
+    const dueDate = new Date(startDate);
+    dueDate.setMonth(dueDate.getMonth() + (installment - 1));
+    return dueDate;
+  };
+
+  const getExpectedInstallmentMonth = (loan, referenceDate = new Date()) => {
+    const scheduleLength = parseRepaymentPlan(loan).length || 1;
+    const startDate = getLoanStartDate(loan);
+    if (!startDate) return 1;
+
+    const monthsElapsed =
+      ((referenceDate.getFullYear() - startDate.getFullYear()) * 12) +
+      (referenceDate.getMonth() - startDate.getMonth());
+    const expected = monthsElapsed + 1;
+    return Math.max(1, Math.min(scheduleLength, expected));
+  };
+
+  const getLoanDueState = (loan, nextDue) => {
+    if (loan.status === 'completed' || !nextDue) return 'Completed';
+    const expectedMonth = getExpectedInstallmentMonth(loan, new Date());
+    if (nextDue.month < expectedMonth) return 'Overdue';
+    if (nextDue.month === expectedMonth) return 'Due This Month';
+    return 'Current';
+  };
+
+  const getLoanOverdueAmount = (loan, nextDue) => {
+    if (!nextDue) return 0;
+    const expectedMonth = getExpectedInstallmentMonth(loan, new Date());
+    if (nextDue.month >= expectedMonth) return 0;
+
+    let overdueAmount = 0;
+    for (let month = nextDue.month; month < expectedMonth; month += 1) {
+      overdueAmount += getLoanMonthDueAmount(loan, month);
+    }
+    return overdueAmount;
+  };
+
+  const getLoanNextThreeMonthsDue = (loan, nextDue) => {
+    if (!nextDue) return 0;
+    const schedule = parseRepaymentPlan(loan);
+    if (schedule.length === 0) return 0;
+    const paidMonths = new Set(
+      getLoanRepaymentsForLoan(loan.$id).map(repayment => parseInt(repayment.month, 10))
+    );
+
+    let total = 0;
+    for (let month = nextDue.month; month < nextDue.month + 3; month += 1) {
+      const inSchedule = schedule.some(item => parseInt(item.month, 10) === month);
+      if (inSchedule && !paidMonths.has(month)) {
+        total += getLoanMonthDueAmount(loan, month);
+      }
+    }
+    return total;
+  };
+
+  const getMemberLoansForPortfolio = (memberId) => {
+    return filteredLoans.filter(loan =>
+      normalizeMemberId(loan.memberId) === memberId &&
+      ['active', 'approved', 'completed'].includes(loan.status)
+    );
+  };
+
+  const getMemberRepaymentTimeline = (memberId) => {
+    const memberLoanIds = new Set(getMemberLoansForPortfolio(memberId).map(loan => loan.$id));
+    return filteredLoanRepayments
+      .filter(repayment => memberLoanIds.has(normalizeLoanId(repayment.loanId)))
+      .map((repayment) => {
+        const loanId = normalizeLoanId(repayment.loanId);
+        const paidDate = repayment.paidAt || repayment.createdAt || repayment.$createdAt || null;
+        return {
+          loanId,
+          month: parseInt(repayment.month, 10) || 0,
+          amount: parseInt(repayment.amount, 10) || 0,
+          paidAt: paidDate,
+          isEarlyPayment: !!repayment.isEarlyPayment
+        };
+      })
+      .sort((a, b) => new Date(b.paidAt || 0) - new Date(a.paidAt || 0));
+  };
+
+  const getMemberNextDueMonthNumber = (memberId) => {
+    const activeMemberLoans = filteredLoans.filter(loan =>
+      normalizeMemberId(loan.memberId) === memberId &&
+      (loan.status === 'active' || loan.status === 'approved')
+    );
+    const nextMonths = activeMemberLoans
+      .map(loan => getLoanNextDue(loan)?.month)
+      .filter(Boolean);
+    return nextMonths.length > 0 ? Math.min(...nextMonths) : 1;
+  };
+
+  const getMemberLoanPortfolioRows = (memberId, monthNumber) => {
+    const month = parseInt(monthNumber, 10);
+    return getMemberLoansForPortfolio(memberId).map((loan) => {
+      const schedule = parseRepaymentPlan(loan);
+      const repayments = getLoanRepaymentsForLoan(loan.$id);
+      const paidMonths = new Set(repayments.map(repayment => parseInt(repayment.month, 10)));
+      const installmentsCleared = paidMonths.size;
+      const installmentCount = schedule.length;
+      const clearancePercent = installmentCount > 0
+        ? Math.round((installmentsCleared / installmentCount) * 100)
+        : 0;
+      const paidTotal = repayments.reduce((sum, repayment) => sum + (parseInt(repayment.amount, 10) || 0), 0);
+      const dueForMonth = (loan.status === 'active' || loan.status === 'approved')
+        ? getLoanMonthDueAmount(loan, month)
+        : 0;
+      const repaymentForMonth = getRepaymentForLoanMonth(loan.$id, month);
+      const monthCleared = parseInt(repaymentForMonth?.amount, 10) || 0;
+      const monthClearedAt = repaymentForMonth
+        ? (repaymentForMonth.paidAt || repaymentForMonth.createdAt || repaymentForMonth.$createdAt || null)
+        : null;
+      const nextDue = (loan.status === 'active' || loan.status === 'approved') ? getLoanNextDue(loan) : null;
+      const nextDueDate = nextDue ? getLoanInstallmentDate(loan, nextDue.month) : null;
+      const dueState = getLoanDueState(loan, nextDue);
+      const overdueAmount = getLoanOverdueAmount(loan, nextDue);
+      const nextThreeMonthsDue = getLoanNextThreeMonthsDue(loan, nextDue);
+      const outstanding = loan.status === 'completed'
+        ? 0
+        : (parseInt(loan.balance, 10) || parseInt(loan.amount, 10) || 0);
+      const lastRepayment = repayments.length ? repayments[repayments.length - 1] : null;
+      const lastClearedAt = lastRepayment
+        ? (lastRepayment.paidAt || lastRepayment.createdAt || lastRepayment.$createdAt || null)
+        : null;
+      const guarantorSettlement = getLoanGuarantorSettlement(loan);
+      const interestMode = getLoanInterestModeLabel(loan);
+      const monthlyRateApplied = getLoanMonthlyRatePercent(loan);
+      const interestBasis = getLoanInterestBasisLabel(loan);
+
+      return {
+        loan,
+        amount: parseInt(loan.amount, 10) || 0,
+        outstanding,
+        paidTotal,
+        dueForMonth,
+        monthCleared,
+        monthClearedAt,
+        nextDue,
+        nextDueDate,
+        dueState,
+        overdueAmount,
+        nextThreeMonthsDue,
+        installmentCount,
+        installmentsCleared,
+        clearancePercent,
+        lastClearedAt,
+        guarantorSettlement,
+        interestMode,
+        monthlyRateApplied,
+        interestBasis
+      };
+    });
+  };
+
+  const getMemberLoanPortfolioSummary = (memberId, monthNumber) => {
+    const rows = getMemberLoanPortfolioRows(memberId, monthNumber);
+    const timeline = getMemberRepaymentTimeline(memberId);
+    const nextDueMonths = rows
+      .map(row => row.nextDue?.month)
+      .filter(Boolean)
+      .map(value => parseInt(value, 10));
+    const earliestNextDueMonth = nextDueMonths.length ? Math.min(...nextDueMonths) : null;
+
+    const totalOutstandingPrincipal = rows.reduce((sum, row) => sum + row.outstanding, 0);
+    const totalPrincipalCleared = rows.reduce(
+      (sum, row) => sum + Math.max(0, (parseInt(row.amount, 10) || 0) - (parseInt(row.outstanding, 10) || 0)),
+      0
+    );
+    const totalCashCleared = rows.reduce((sum, row) => sum + row.paidTotal, 0);
+    const totalNextPayment = rows.reduce(
+      (sum, row) => sum + (parseInt(row.nextDue?.amount, 10) || 0),
+      0
+    );
+    const totalNext3Months = rows.reduce((sum, row) => sum + (row.nextThreeMonthsDue || 0), 0);
+    const totalOverdueAmount = rows.reduce((sum, row) => sum + (row.overdueAmount || 0), 0);
+    const totalGuarantorSecuredOriginal = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.securedOriginal || 0),
+      0
+    );
+    const totalGuarantorRecovered = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.guarantorRecovered || 0),
+      0
+    );
+    const totalGuarantorOutstanding = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.securedOutstanding || 0),
+      0
+    );
+    const loansWithGuarantorCoverage = rows.filter(
+      (row) => (row.guarantorSettlement?.securedOriginal || 0) > 0
+    ).length;
+    const guarantorSettlementCompletedLoans = rows.filter(
+      (row) => (row.guarantorSettlement?.securedOriginal || 0) > 0 && (row.guarantorSettlement?.securedOutstanding || 0) === 0
+    ).length;
+    const overdueRows = rows.filter(row => row.dueState === 'Overdue' && row.nextDueDate);
+    const oldestOverdueDate = overdueRows.length
+      ? overdueRows.reduce((oldest, row) => {
+          if (!oldest) return row.nextDueDate;
+          return row.nextDueDate < oldest ? row.nextDueDate : oldest;
+        }, null)
+      : null;
+    const memberSavings = getMemberSavingsTotal(memberId);
+
+    return {
+      totalDisbursed: rows.reduce((sum, row) => sum + row.amount, 0),
+      totalOwed: totalOutstandingPrincipal,
+      totalOutstandingPrincipal,
+      totalPrincipalCleared,
+      totalCashCleared,
+      monthDueTotal: rows.reduce((sum, row) => sum + row.dueForMonth, 0),
+      monthClearedTotal: rows.reduce((sum, row) => sum + row.monthCleared, 0),
+      totalNextPayment,
+      totalNext3Months,
+      totalOverdueAmount,
+      totalGuarantorSecuredOriginal,
+      totalGuarantorRecovered,
+      totalGuarantorOutstanding,
+      guarantorSettlementPercent: totalGuarantorSecuredOriginal > 0
+        ? Math.round((totalGuarantorRecovered / totalGuarantorSecuredOriginal) * 100)
+        : 0,
+      loansWithGuarantorCoverage,
+      guarantorSettlementCompletedLoans,
+      overdueLoanCount: rows.filter(row => row.dueState === 'Overdue').length,
+      oldestOverdueDate,
+      earliestNextDueMonth,
+      memberSavings,
+      netMemberPosition: memberSavings - totalOutstandingPrincipal,
+      latestClearedAt: timeline[0]?.paidAt || null
+    };
+  };
+
+  const getMemberPortfolioOverview = (memberId) => {
+    const rows = getMemberLoanPortfolioRows(memberId, getMemberNextDueMonthNumber(memberId));
+    const timeline = getMemberRepaymentTimeline(memberId);
+    const nextDueMonth = getMemberNextDueMonthNumber(memberId);
+    const nextPaymentTotal = rows.reduce(
+      (sum, row) => sum + (parseInt(row.nextDue?.amount, 10) || 0),
+      0
+    );
+    const totalOutstandingPrincipal = rows.reduce((sum, row) => sum + row.outstanding, 0);
+    const totalPrincipalCleared = rows.reduce(
+      (sum, row) => sum + Math.max(0, (parseInt(row.amount, 10) || 0) - (parseInt(row.outstanding, 10) || 0)),
+      0
+    );
+    const totalCashCleared = rows.reduce((sum, row) => sum + row.paidTotal, 0);
+    const totalNext3Months = rows.reduce((sum, row) => sum + (row.nextThreeMonthsDue || 0), 0);
+    const totalOverdueAmount = rows.reduce((sum, row) => sum + (row.overdueAmount || 0), 0);
+    const totalGuarantorSecuredOriginal = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.securedOriginal || 0),
+      0
+    );
+    const totalGuarantorRecovered = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.guarantorRecovered || 0),
+      0
+    );
+    const totalGuarantorOutstanding = rows.reduce(
+      (sum, row) => sum + (row.guarantorSettlement?.securedOutstanding || 0),
+      0
+    );
+    const loansWithGuarantorCoverage = rows.filter(
+      (row) => (row.guarantorSettlement?.securedOriginal || 0) > 0
+    ).length;
+    const guarantorSettlementCompletedLoans = rows.filter(
+      (row) => (row.guarantorSettlement?.securedOriginal || 0) > 0 && (row.guarantorSettlement?.securedOutstanding || 0) === 0
+    ).length;
+    const overdueRows = rows.filter(row => row.dueState === 'Overdue' && row.nextDueDate);
+    const oldestOverdueDate = overdueRows.length
+      ? overdueRows.reduce((oldest, row) => {
+          if (!oldest) return row.nextDueDate;
+          return row.nextDueDate < oldest ? row.nextDueDate : oldest;
+        }, null)
+      : null;
+    const memberSavings = getMemberSavingsTotal(memberId);
+
+    return {
+      memberId,
+      activeLoanCount: rows.filter(row => row.loan.status === 'active' || row.loan.status === 'approved').length,
+      totalDisbursed: rows.reduce((sum, row) => sum + row.amount, 0),
+      totalOwed: totalOutstandingPrincipal,
+      totalOutstandingPrincipal,
+      totalPrincipalCleared,
+      totalCashCleared,
+      totalSavings: memberSavings,
+      netMemberPosition: memberSavings - totalOutstandingPrincipal,
+      nextDueMonth,
+      nextPaymentTotal,
+      next3MonthsTotal: totalNext3Months,
+      totalOverdueAmount,
+      totalGuarantorSecuredOriginal,
+      totalGuarantorRecovered,
+      totalGuarantorOutstanding,
+      guarantorSettlementPercent: totalGuarantorSecuredOriginal > 0
+        ? Math.round((totalGuarantorRecovered / totalGuarantorSecuredOriginal) * 100)
+        : 0,
+      loansWithGuarantorCoverage,
+      guarantorSettlementCompletedLoans,
+      overdueLoanCount: rows.filter(row => row.dueState === 'Overdue').length,
+      dueThisMonthLoanCount: rows.filter(row => row.dueState === 'Due This Month').length,
+      currentLoanCount: rows.filter(row => row.dueState === 'Current').length,
+      oldestOverdueDate,
+      lastClearedAt: timeline[0]?.paidAt || null
+    };
+  };
+
+  useEffect(() => {
+    if (!portfolioMemberId) {
+      setPortfolioMonthNumber(1);
+      return;
+    }
+    setPortfolioMonthNumber(getMemberNextDueMonthNumber(portfolioMemberId));
+  }, [
+    portfolioMemberId,
+    reportStartDate,
+    reportEndDate,
+    reportData.loans,
+    reportData.loanRepayments,
+    reportData.loanCharges
+  ]);
 
   const getLoanInterestBreakdown = () => {
     const repaymentsByLoan = filteredLoanRepayments.reduce((acc, repayment) => {
@@ -284,6 +816,27 @@ const ReportsManagement = () => {
     };
   };
 
+  const getPortfolioGuarantorSettlementTotals = () => {
+    const portfolioLoans = filteredLoans.filter((loan) =>
+      ['active', 'approved', 'completed'].includes(loan.status)
+    );
+    const settlements = portfolioLoans.map((loan) => getLoanGuarantorSettlement(loan));
+    const totalSecuredOriginal = settlements.reduce((sum, item) => sum + (item.securedOriginal || 0), 0);
+    const totalRecovered = settlements.reduce((sum, item) => sum + (item.guarantorRecovered || 0), 0);
+    const totalOutstanding = settlements.reduce((sum, item) => sum + (item.securedOutstanding || 0), 0);
+    const loanCountWithGuarantors = settlements.filter((item) => (item.securedOriginal || 0) > 0).length;
+
+    return {
+      totalSecuredOriginal,
+      totalRecovered,
+      totalOutstanding,
+      loanCountWithGuarantors,
+      settlementPercent: totalSecuredOriginal > 0
+        ? Math.round((totalRecovered / totalSecuredOriginal) * 100)
+        : 0
+    };
+  };
+
   const reportRangeLabel = () => {
     if (!reportStartDate && !reportEndDate) return 'All dates';
     const start = reportStartDate ? new Date(reportStartDate).toLocaleDateString() : 'Any';
@@ -323,6 +876,7 @@ const ReportsManagement = () => {
 
   const memberReport = generateMemberReport();
   const financialSummary = generateFinancialSummary();
+  const guarantorSettlementTotals = getPortfolioGuarantorSettlementTotals();
   const cashEntries = getLedgerRows('CashAtBank').sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
@@ -338,9 +892,420 @@ const ReportsManagement = () => {
     return acc;
   }, {});
   const getLoanLabel = (loanId) => loanLabelMap[loanId?.$id || loanId] || 'Loan';
+  const selectedPortfolioMember = reportData.members.find(member => member.$id === portfolioMemberId) || null;
+  const selectedPortfolioRows = portfolioMemberId
+    ? getMemberLoanPortfolioRows(portfolioMemberId, portfolioMonthNumber)
+    : [];
+  const selectedPortfolioSummary = portfolioMemberId
+    ? getMemberLoanPortfolioSummary(portfolioMemberId, portfolioMonthNumber)
+    : {
+        totalDisbursed: 0,
+        totalOwed: 0,
+        totalOutstandingPrincipal: 0,
+        totalPrincipalCleared: 0,
+        totalCashCleared: 0,
+        totalSavings: 0,
+        netMemberPosition: 0,
+        monthDueTotal: 0,
+        monthClearedTotal: 0,
+        totalNextPayment: 0,
+        totalNext3Months: 0,
+        totalOverdueAmount: 0,
+        totalGuarantorSecuredOriginal: 0,
+        totalGuarantorRecovered: 0,
+        totalGuarantorOutstanding: 0,
+        guarantorSettlementPercent: 0,
+        loansWithGuarantorCoverage: 0,
+        guarantorSettlementCompletedLoans: 0,
+        overdueLoanCount: 0,
+        oldestOverdueDate: null,
+        earliestNextDueMonth: null,
+        latestClearedAt: null
+      };
+  const selectedPortfolioTimeline = portfolioMemberId
+    ? getMemberRepaymentTimeline(portfolioMemberId)
+    : [];
+  const allMembersPortfolioOverview = reportData.members
+    .map((member) => ({
+      member,
+      overview: getMemberPortfolioOverview(member.$id)
+    }))
+    .filter((item) => item.overview.totalDisbursed > 0)
+    .sort((a, b) => b.overview.totalOutstandingPrincipal - a.overview.totalOutstandingPrincipal);
+  const portfolioHealthSummary = allMembersPortfolioOverview.reduce((summary, item) => {
+    const { overview } = item;
+    if (overview.overdueLoanCount > 0) {
+      summary.membersWithOverdue += 1;
+    }
+    summary.totalOverdueAmount += overview.totalOverdueAmount || 0;
+    if (overview.oldestOverdueDate) {
+      const target = new Date(overview.oldestOverdueDate);
+      if (!summary.oldestOverdueDate || target < summary.oldestOverdueDate) {
+        summary.oldestOverdueDate = target;
+      }
+    }
+    summary.next3MonthsForecast += overview.next3MonthsTotal || 0;
+    summary.membersWithActiveGuarantorExposure += (overview.totalGuarantorOutstanding || 0) > 0 ? 1 : 0;
+    summary.totalGuarantorOutstanding += overview.totalGuarantorOutstanding || 0;
+    summary.totalGuarantorRecovered += overview.totalGuarantorRecovered || 0;
+    summary.totalGuarantorSecuredOriginal += overview.totalGuarantorSecuredOriginal || 0;
+    return summary;
+  }, {
+    membersWithOverdue: 0,
+    totalOverdueAmount: 0,
+    oldestOverdueDate: null,
+    next3MonthsForecast: 0,
+    membersWithActiveGuarantorExposure: 0,
+    totalGuarantorOutstanding: 0,
+    totalGuarantorRecovered: 0,
+    totalGuarantorSecuredOriginal: 0
+  });
+
+  const getDueStateBadgeClass = (state) => {
+    switch (state) {
+      case 'Overdue':
+        return 'bg-red-100 text-red-700';
+      case 'Due This Month':
+        return 'bg-amber-100 text-amber-700';
+      case 'Current':
+        return 'bg-blue-100 text-blue-700';
+      case 'Completed':
+        return 'bg-emerald-100 text-emerald-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const getPortfolioMemberHealth = (overview) => {
+    if ((overview.overdueLoanCount || 0) > 0) return 'Overdue';
+    if ((overview.dueThisMonthLoanCount || 0) > 0) return 'Due This Month';
+    if ((overview.currentLoanCount || 0) > 0) return 'Current';
+    return 'Completed';
+  };
+
+  const getGuarantorSettlementBadgeClass = (stage) => {
+    switch (stage) {
+      case 'Settled':
+        return 'bg-emerald-100 text-emerald-700';
+      case 'In Progress':
+        return 'bg-blue-100 text-blue-700';
+      case 'Pending':
+        return 'bg-amber-100 text-amber-700';
+      case 'Not Started':
+        return 'bg-slate-100 text-slate-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const formatAllocationStatus = (status) => {
+    switch (status) {
+      case 'guarantor_priority':
+        return 'Guarantor First';
+      case 'borrower_priority':
+        return 'Borrower Principal';
+      case 'pending_guarantor':
+        return 'Pending Guarantor';
+      case 'not_required':
+        return 'Not Required';
+      default:
+        return status || 'N/A';
+    }
+  };
+
+  const pdfWatermark = {
+    text: 'CROWNZCOM SACCO',
+    textSize: 42,
+    imageData: watermarkLogoData
+  };
   const disbursementLedgerCount = getLedgerRows('LoanDisbursement').length;
   const repaymentLedgerCount = getLedgerRows('LoanRepayment').length;
   const chargeLedgerCount = getLedgerRows('TransferCharge').length;
+
+  const exportGuarantorSettlementCsv = () => {
+    const rows = filteredLoans
+      .filter((loan) => ['active', 'approved', 'completed'].includes(loan.status))
+      .map((loan) => {
+        const settlement = getLoanGuarantorSettlement(loan);
+        return {
+          loan: getLoanLabel(loan.$id),
+          member: memberNameById[normalizeMemberId(loan.memberId)] || '',
+          loanType: loan.loanType || 'short_term',
+          loanStatus: loan.status,
+          allocationMode: formatAllocationStatus(settlement.allocationStatus),
+          settlementStage: settlement.settlementStage,
+          securedTotal: settlement.securedOriginal || 0,
+          recovered: settlement.guarantorRecovered || 0,
+          outstanding: settlement.securedOutstanding || 0,
+          settlementPercent: `${settlement.settlementPercent || 0}%`,
+          settlementDate: settlement.settlementCompletedAt
+            ? new Date(settlement.settlementCompletedAt).toLocaleDateString()
+            : '',
+          lastAllocationAt: loan.lastRepaymentAllocationAt
+            ? new Date(loan.lastRepaymentAllocationAt).toLocaleDateString()
+            : ''
+        };
+      })
+      .filter((row) => row.securedTotal > 0);
+
+    exportToCSV(rows, 'guarantor-settlement-progress');
+  };
+
+  const exportMemberLoanPortfolioCsv = () => {
+    if (!portfolioMemberId) {
+      toast.error('Select a member first');
+      return;
+    }
+
+    const rows = selectedPortfolioRows.map((row) => ({
+      loanType: row.loan.loanType || 'short_term',
+      loan: getLoanLabel(row.loan.$id),
+      interestMode: row.interestMode,
+      monthlyRateAppliedPercent: row.monthlyRateApplied,
+      interestBasis: row.interestBasis,
+      loanStatus: row.loan.status,
+      health: row.dueState,
+      disbursedAmount: row.amount,
+      outstandingPrincipal: row.outstanding,
+      cashPaid: row.paidTotal,
+      installmentsCleared: `${row.installmentsCleared}/${row.installmentCount || 0}`,
+      clearancePercent: `${row.clearancePercent}%`,
+      nextDueInstallment: row.nextDue?.month || '',
+      nextDueDate: row.nextDueDate ? new Date(row.nextDueDate).toLocaleDateString() : '',
+      nextPayment: row.nextDue?.amount || 0,
+      overdueAmount: row.overdueAmount || 0,
+      next3MonthsForecast: row.nextThreeMonthsDue || 0,
+      guarantorSettlementStage: row.guarantorSettlement?.settlementStage || 'N/A',
+      guarantorSettlementPercent: `${row.guarantorSettlement?.settlementPercent || 0}%`,
+      guarantorSecuredOriginal: row.guarantorSettlement?.securedOriginal || 0,
+      guarantorRecovered: row.guarantorSettlement?.guarantorRecovered || 0,
+      guarantorOutstanding: row.guarantorSettlement?.securedOutstanding || 0,
+      repaymentAllocationStatus: formatAllocationStatus(row.guarantorSettlement?.allocationStatus),
+      lastCleared: row.lastClearedAt ? new Date(row.lastClearedAt).toLocaleDateString() : '',
+      [`dueMonth${portfolioMonthNumber}`]: row.dueForMonth,
+      [`clearedMonth${portfolioMonthNumber}`]: row.monthCleared,
+      clearedAt: row.monthClearedAt ? new Date(row.monthClearedAt).toLocaleDateString() : ''
+    }));
+
+    exportToCSV(
+      rows,
+      `loan-portfolio-${selectedPortfolioMember?.membershipNumber || selectedPortfolioMember?.$id || 'member'}`
+    );
+  };
+
+  const printMemberLoanPortfolio = () => {
+    if (!portfolioMemberId) {
+      toast.error('Select a member first');
+      return;
+    }
+
+    const memberName = selectedPortfolioMember?.name || '';
+    const membershipNumber = selectedPortfolioMember?.membershipNumber || '';
+    const generatedAt = new Date().toLocaleString();
+    const monthNumber = portfolioMonthNumber;
+
+    const loanRows = selectedPortfolioRows.map((row) => `
+      <tr>
+        <td>
+          <div class="loan-main">${getLoanLabel(row.loan.$id)}</div>
+          ${row.guarantorSettlement?.securedOriginal > 0
+            ? `<div class="loan-sub">
+                G-settlement: ${formatCurrency(row.guarantorSettlement.guarantorRecovered)} / ${formatCurrency(row.guarantorSettlement.securedOriginal)}
+                (${row.guarantorSettlement.settlementPercent}%)
+               </div>`
+            : '<div class="loan-sub">No guarantor coverage</div>'}
+        </td>
+        <td>${row.loan.status}</td>
+        <td>${row.interestBasis}</td>
+        <td>
+          <span class="badge ${
+            row.dueState === 'Overdue'
+              ? 'overdue'
+              : row.dueState === 'Due This Month'
+                ? 'due'
+                : row.dueState === 'Current'
+                  ? 'current'
+                  : 'completed'
+          }">${row.dueState}</span>
+        </td>
+        <td style="text-align:right">${formatCurrency(row.outstanding)}</td>
+        <td style="text-align:right">${formatCurrency(row.paidTotal)}</td>
+        <td style="text-align:center">${row.installmentsCleared}/${row.installmentCount || 0} (${row.clearancePercent}%)</td>
+        <td style="text-align:center">${row.nextDue ? row.nextDue.month : '-'}</td>
+        <td style="text-align:right">${formatCurrency(row.nextDue?.amount || 0)}</td>
+        <td style="text-align:right">${formatCurrency(row.overdueAmount || 0)}</td>
+        <td>${row.lastClearedAt ? new Date(row.lastClearedAt).toLocaleDateString() : '-'}</td>
+      </tr>
+    `).join('');
+
+    const timelineRows = selectedPortfolioTimeline.slice(0, 30).map((entry) => `
+      <tr>
+        <td>${entry.paidAt ? new Date(entry.paidAt).toLocaleDateString() : ''}</td>
+        <td>${getLoanLabel(entry.loanId)}</td>
+        <td style="text-align:center">${entry.month || ''}</td>
+        <td style="text-align:right">${formatCurrency(entry.amount || 0)}</td>
+        <td style="text-align:center">${entry.isEarlyPayment ? 'Yes' : 'No'}</td>
+      </tr>
+    `).join('');
+
+    const guarantorRows = selectedPortfolioRows
+      .filter((row) => (row.guarantorSettlement?.securedOriginal || 0) > 0)
+      .map((row) => `
+        <tr>
+          <td>${getLoanLabel(row.loan.$id)}</td>
+          <td>${formatAllocationStatus(row.guarantorSettlement?.allocationStatus)}</td>
+          <td>${row.guarantorSettlement?.settlementStage || 'N/A'}</td>
+          <td style="text-align:right">${formatCurrency(row.guarantorSettlement?.securedOriginal || 0)}</td>
+          <td style="text-align:right">${formatCurrency(row.guarantorSettlement?.guarantorRecovered || 0)} (${row.guarantorSettlement?.settlementPercent || 0}%)</td>
+          <td style="text-align:right">${formatCurrency(row.guarantorSettlement?.securedOutstanding || 0)}</td>
+          <td>${row.guarantorSettlement?.settlementCompletedAt ? new Date(row.guarantorSettlement?.settlementCompletedAt).toLocaleDateString() : '-'}</td>
+        </tr>
+      `).join('');
+
+    const popup = window.open('', '_blank', 'width=1100,height=800');
+    if (!popup) {
+      toast.error('Allow pop-ups to print this report.');
+      return;
+    }
+
+    popup.document.write(`
+      <html>
+        <head>
+          <title>Member Loan Portfolio Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111827; position: relative; }
+            body::before {
+              content: '';
+              position: fixed;
+              inset: 0;
+              background-image: url('${watermarkLogoData || '/logo.png'}');
+              background-repeat: no-repeat;
+              background-position: center;
+              background-size: 360px;
+              opacity: 0.08;
+              z-index: 0;
+              pointer-events: none;
+            }
+            body > * { position: relative; z-index: 1; }
+            h1, h2 { margin: 0 0 10px 0; }
+            .meta { margin-bottom: 14px; color: #4b5563; font-size: 13px; }
+            .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 18px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; }
+            .label { font-size: 11px; color: #6b7280; }
+            .value { font-size: 15px; font-weight: 700; margin-top: 4px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 16px; table-layout: fixed; }
+            th, td {
+              border: 1px solid #e5e7eb;
+              padding: 7px;
+              font-size: 12px;
+              white-space: normal;
+              word-break: break-word;
+              overflow-wrap: anywhere;
+              vertical-align: top;
+            }
+            th { background: #f9fafb; text-align: left; }
+            .badge { border-radius: 999px; font-size: 10px; font-weight: 700; padding: 2px 6px; display: inline-block; }
+            .badge.overdue { background: #fee2e2; color: #b91c1c; }
+            .badge.due { background: #fef3c7; color: #92400e; }
+            .badge.current { background: #dbeafe; color: #1d4ed8; }
+            .badge.completed { background: #d1fae5; color: #047857; }
+            .loan-main { font-weight: 600; }
+            .loan-sub { font-size: 10px; color: #64748b; margin-top: 4px; line-height: 1.3; }
+          </style>
+        </head>
+        <body>
+          <h1>Member Loan Portfolio Report</h1>
+          <div class="meta">
+            <div>Generated: ${generatedAt}</div>
+            <div>Member: ${memberName}</div>
+            <div>Membership Number: ${membershipNumber}</div>
+            <div>Schedule Month Analysed: ${monthNumber}</div>
+            <div>Date Range: ${reportRangeLabel()}</div>
+          </div>
+
+          <div class="grid">
+            <div class="card"><div class="label">Total Disbursed</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalDisbursed)}</div></div>
+            <div class="card"><div class="label">Outstanding Principal</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalOutstandingPrincipal)}</div></div>
+            <div class="card"><div class="label">Principal Cleared</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalPrincipalCleared)}</div></div>
+            <div class="card"><div class="label">Cash Cleared (Incl. Interest/Charges)</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalCashCleared)}</div></div>
+            <div class="card"><div class="label">Member Savings</div><div class="value">${formatCurrency(selectedPortfolioSummary.memberSavings)}</div></div>
+            <div class="card"><div class="label">Net Member Position (Savings - Loans)</div><div class="value">${formatCurrency(selectedPortfolioSummary.netMemberPosition)}</div></div>
+            <div class="card"><div class="label">Total Next Payment</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalNextPayment)}</div></div>
+            <div class="card"><div class="label">Next 3 Months Forecast</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalNext3Months)}</div></div>
+            <div class="card"><div class="label">Overdue Amount</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalOverdueAmount)}</div></div>
+            <div class="card"><div class="label">Earliest Next Due Installment</div><div class="value">${selectedPortfolioSummary.earliestNextDueMonth || 'N/A'}</div></div>
+            <div class="card"><div class="label">Month ${monthNumber} Total Due</div><div class="value">${formatCurrency(selectedPortfolioSummary.monthDueTotal)}</div></div>
+            <div class="card"><div class="label">Month ${monthNumber} Cleared</div><div class="value">${formatCurrency(selectedPortfolioSummary.monthClearedTotal)}</div></div>
+            <div class="card"><div class="label">Overdue Loans</div><div class="value">${selectedPortfolioSummary.overdueLoanCount}</div></div>
+            <div class="card"><div class="label">Latest Cleared Date</div><div class="value">${selectedPortfolioSummary.latestClearedAt ? new Date(selectedPortfolioSummary.latestClearedAt).toLocaleDateString() : 'N/A'}</div></div>
+            <div class="card"><div class="label">Guarantor Secured Total</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalGuarantorSecuredOriginal || 0)}</div></div>
+            <div class="card"><div class="label">Guarantor Recovered</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalGuarantorRecovered || 0)}</div></div>
+            <div class="card"><div class="label">Guarantor Outstanding</div><div class="value">${formatCurrency(selectedPortfolioSummary.totalGuarantorOutstanding || 0)}</div></div>
+            <div class="card"><div class="label">Guarantor Settlement Progress</div><div class="value">${selectedPortfolioSummary.guarantorSettlementPercent || 0}%</div></div>
+          </div>
+
+          <h2>Loans Overview</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Loan</th>
+                <th>Loan Status</th>
+                <th>Interest Basis</th>
+                <th>Health</th>
+                <th>Outstanding Principal</th>
+                <th>Cash Paid</th>
+                <th>Cleared Progress</th>
+                <th>Next Due Installment</th>
+                <th>Next Payment</th>
+                <th>Overdue</th>
+                <th>Last Cleared</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${loanRows || '<tr><td colspan="11">No loans found for this member.</td></tr>'}
+            </tbody>
+          </table>
+
+          <h2>Recent Cleared Payments</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Loan</th>
+                <th>Schedule Month</th>
+                <th>Amount</th>
+                <th>Early Payment</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${timelineRows || '<tr><td colspan="5">No repayments recorded.</td></tr>'}
+            </tbody>
+          </table>
+
+          <h2>Guarantor Settlement Progress (Derived)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Loan</th>
+                <th>Allocation</th>
+                <th>Stage</th>
+                <th>Secured Total</th>
+                <th>Recovered</th>
+                <th>Outstanding</th>
+                <th>Settlement Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${guarantorRows || '<tr><td colspan="7">No guarantor-backed loans.</td></tr>'}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
 
   const exportAgmSummaryPdf = () => {
     const meta = [
@@ -351,7 +1316,8 @@ const ReportsManagement = () => {
     const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'AGM Financial Summary',
       subtitle: 'Crownzcom Investment Club',
-      meta
+      meta,
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
@@ -412,7 +1378,11 @@ const ReportsManagement = () => {
       { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
       { label: 'Total Repaid', value: formatCurrency(financialSummary.totalLoanRepayments) },
       { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
-      { label: 'Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) }
+      { label: 'Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) },
+      { label: 'Guarantor Secured Total', value: formatCurrency(guarantorSettlementTotals.totalSecuredOriginal) },
+      { label: 'Guarantor Recovered', value: formatCurrency(guarantorSettlementTotals.totalRecovered) },
+      { label: 'Guarantor Outstanding', value: formatCurrency(guarantorSettlementTotals.totalOutstanding) },
+      { label: 'Guarantor Settlement Progress', value: `${guarantorSettlementTotals.settlementPercent}%` }
     ], pdfMeta);
 
     savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -438,7 +1408,8 @@ const ReportsManagement = () => {
       meta: [
         `Generated: ${new Date().toLocaleString()}`,
         `Report Range: ${reportRangeLabel()}`
-      ]
+      ],
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
@@ -454,46 +1425,141 @@ const ReportsManagement = () => {
   };
 
   const exportLoanPortfolioPdf = () => {
-    const loanLabelMap = filteredLoans
-      .slice()
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-      .reduce((acc, loan, index) => {
-        acc[loan.$id] = `Loan_${index + 1}`;
-        return acc;
-      }, {});
-    const memberNameById = reportData.members.reduce((acc, member) => {
-      acc[member.$id] = member.name;
-      return acc;
-    }, {});
-    const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
-    const tableRows = activeLoans.map(loan => ([
-      loanLabelMap[loan.$id] || loan.$id,
-      memberNameById[normalizeMemberId(loan.memberId)] || 'Unknown',
-      formatCurrency(loan.amount),
-      formatCurrency(loan.balance || loan.amount),
-      loan.status
-    ]));
+    const membersWithLoans = reportData.members
+      .map((member) => {
+        const overview = getMemberPortfolioOverview(member.$id);
+        return { member, overview };
+      })
+      .filter(({ overview }) => overview.totalDisbursed > 0);
+
+    const totalCashCleared = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalCashCleared || 0),
+      0
+    );
+    const totalOutstandingPrincipal = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalOutstandingPrincipal || 0),
+      0
+    );
+    const totalPrincipalCleared = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalPrincipalCleared || 0),
+      0
+    );
+    const totalNetMemberPosition = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.netMemberPosition || 0),
+      0
+    );
+    const totalNextPayment = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.nextPaymentTotal || 0),
+      0
+    );
+    const totalNext3Months = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.next3MonthsTotal || 0),
+      0
+    );
+    const totalOverdueAmount = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalOverdueAmount || 0),
+      0
+    );
+    const totalGuarantorSecuredOriginal = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalGuarantorSecuredOriginal || 0),
+      0
+    );
+    const totalGuarantorRecovered = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalGuarantorRecovered || 0),
+      0
+    );
+    const totalGuarantorOutstanding = membersWithLoans.reduce(
+      (sum, item) => sum + (item.overview.totalGuarantorOutstanding || 0),
+      0
+    );
 
     const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Loan Portfolio Summary',
-      subtitle: 'Active Loans',
-      meta: [`Generated: ${new Date().toLocaleString()}`]
+      subtitle: 'Grouped by Member',
+      meta: [`Generated: ${new Date().toLocaleString()}`],
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
-      { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
-      { label: 'Active Loans', value: activeLoans.length }
+      { label: 'Outstanding Principal', value: formatCurrency(totalOutstandingPrincipal) },
+      { label: 'Principal Cleared', value: formatCurrency(totalPrincipalCleared) },
+      { label: 'Cash Cleared (Incl. Interest/Charges)', value: formatCurrency(totalCashCleared) },
+      { label: 'Total Next Payment', value: formatCurrency(totalNextPayment) },
+      { label: 'Next 3 Months Forecast', value: formatCurrency(totalNext3Months) },
+      { label: 'Overdue Amount', value: formatCurrency(totalOverdueAmount) },
+      { label: 'Guarantor Secured Total', value: formatCurrency(totalGuarantorSecuredOriginal) },
+      { label: 'Guarantor Recovered', value: formatCurrency(totalGuarantorRecovered) },
+      { label: 'Guarantor Outstanding', value: formatCurrency(totalGuarantorOutstanding) },
+      { label: 'Net Member Position (Savings - Loans)', value: formatCurrency(totalNetMemberPosition) },
+      { label: 'Members With Loans', value: membersWithLoans.length }
     ], pdfMeta);
-    cursorY += 4;
-    cursorY = addSimpleTable(
-      doc,
-      cursorY,
-      ['Loan', 'Member', 'Amount', 'Balance', 'Status'],
-      tableRows,
-      pdfMeta
-    );
+
+    membersWithLoans.forEach(({ member, overview }) => {
+      const memberRows = getMemberLoanPortfolioRows(member.$id, overview.nextDueMonth)
+        .map((row) => {
+          const settlement = row.guarantorSettlement || {};
+          const settlementLabel = settlement.securedOriginal > 0
+            ? `${settlement.settlementStage} (${settlement.settlementPercent}%)`
+            : 'N/A';
+          return [
+            getLoanLabel(row.loan.$id),
+            row.loan.status,
+            row.interestBasis,
+            formatCurrency(row.outstanding),
+            formatCurrency(row.paidTotal),
+            row.nextDue ? `${row.nextDue.month}` : '-',
+            formatCurrency(row.nextDue?.amount || 0),
+            settlementLabel,
+            formatCurrency(settlement.securedOutstanding || 0),
+            formatCurrency(row.overdueAmount || 0),
+            row.lastClearedAt ? new Date(row.lastClearedAt).toLocaleDateString() : '-'
+          ];
+        });
+      const memberTotalsRow = [
+        'Member Totals',
+        '',
+        '',
+        formatCurrency(overview.totalOutstandingPrincipal || 0),
+        formatCurrency(overview.totalCashCleared || 0),
+        overview.nextDueMonth || '-',
+        formatCurrency(overview.nextPaymentTotal || 0),
+        `${overview.guarantorSettlementPercent || 0}%`,
+        formatCurrency(overview.totalGuarantorOutstanding || 0),
+        formatCurrency(overview.totalOverdueAmount || 0),
+        overview.lastClearedAt ? new Date(overview.lastClearedAt).toLocaleDateString() : '-'
+      ];
+
+      cursorY += 4;
+      cursorY = addSectionTitle(
+        doc,
+        cursorY,
+        `${member.name} (${member.membershipNumber || member.$id})`,
+        pdfMeta
+      );
+      cursorY = addKeyValueRows(doc, cursorY, [
+        { label: 'Outstanding Principal', value: formatCurrency(overview.totalOutstandingPrincipal) },
+        { label: 'Member Savings', value: formatCurrency(overview.totalSavings || 0) },
+        { label: 'Net Member Position (Savings - Loans)', value: formatCurrency(overview.netMemberPosition || 0) },
+        { label: 'Principal Cleared', value: formatCurrency(overview.totalPrincipalCleared) },
+        { label: 'Cash Cleared (Incl. Interest/Charges)', value: formatCurrency(overview.totalCashCleared) },
+        { label: 'Earliest Next Due Installment', value: overview.nextDueMonth || '-' },
+        { label: 'Total Next Payment', value: formatCurrency(overview.nextPaymentTotal || 0) },
+        { label: 'Next 3 Months Forecast', value: formatCurrency(overview.next3MonthsTotal || 0) },
+        { label: 'Overdue Amount', value: formatCurrency(overview.totalOverdueAmount || 0) },
+        { label: 'Guarantor Secured Total', value: formatCurrency(overview.totalGuarantorSecuredOriginal || 0) },
+        { label: 'Guarantor Recovered', value: formatCurrency(overview.totalGuarantorRecovered || 0) },
+        { label: 'Guarantor Outstanding', value: formatCurrency(overview.totalGuarantorOutstanding || 0) }
+      ], pdfMeta);
+      cursorY = addSimpleTable(
+        doc,
+        cursorY,
+        ['Loan', 'Status', 'Interest Basis', 'Owed', 'Cash Paid', 'Next Install.', 'Next Payment', 'G-Settle', 'G-Outstanding', 'Overdue', 'Last Cleared'],
+        memberRows.length ? [...memberRows, memberTotalsRow] : [['No loans', '', '', '', '', '', '', '', '', '', '']],
+        pdfMeta
+      );
+    });
 
     savePdf(doc, `loan-portfolio-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -512,7 +1578,8 @@ const ReportsManagement = () => {
         `Generated: ${new Date().toLocaleString()}`,
         `Report Range: ${reportRangeLabel()}`,
         `Total Savings: ${formatCurrency(financialSummary.totalSavings)}`
-      ]
+      ],
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
@@ -545,7 +1612,8 @@ const ReportsManagement = () => {
         `Report Range: ${reportRangeLabel()}`,
         `Total Accrual Entries: ${interestAccruals.length}`,
         `Total Payouts: ${formatCurrency(sumLedgerByTypes(['InterestPayout']))}`
-      ]
+      ],
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
@@ -631,6 +1699,7 @@ const ReportsManagement = () => {
     const periodLabel = reportRangeLabel();
 
     const totalAmount = memberLedger.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+    const memberOverview = getMemberPortfolioOverview(selectedMemberId);
 
     const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
       title: 'Member Statement of Account',
@@ -640,14 +1709,24 @@ const ReportsManagement = () => {
         `Report Range: ${reportRangeLabel()}`,
         `Membership #: ${member.membershipNumber}`,
         `Period: ${periodLabel}`
-      ]
+      ],
+      watermark: pdfWatermark
     });
 
     let cursorY = startY;
     cursorY = addSectionTitle(doc, cursorY, 'Totals', pdfMeta, 4);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Entries', value: memberLedger.length },
-      { label: 'Net Amount', value: formatCurrency(totalAmount) }
+      { label: 'Net Amount', value: formatCurrency(totalAmount) },
+      { label: 'Member Savings', value: formatCurrency(memberOverview.totalSavings || 0) },
+      { label: 'Outstanding Principal', value: formatCurrency(memberOverview.totalOutstandingPrincipal || 0) },
+      { label: 'Net Member Position (Savings - Loans)', value: formatCurrency(memberOverview.netMemberPosition || 0) },
+      { label: 'Total Next Payment', value: formatCurrency(memberOverview.nextPaymentTotal || 0) },
+      { label: 'Next 3 Months Forecast', value: formatCurrency(memberOverview.next3MonthsTotal || 0) },
+      { label: 'Overdue Amount', value: formatCurrency(memberOverview.totalOverdueAmount || 0) },
+      { label: 'Guarantor Secured Total', value: formatCurrency(memberOverview.totalGuarantorSecuredOriginal || 0) },
+      { label: 'Guarantor Recovered', value: formatCurrency(memberOverview.totalGuarantorRecovered || 0) },
+      { label: 'Guarantor Outstanding', value: formatCurrency(memberOverview.totalGuarantorOutstanding || 0) }
     ], pdfMeta);
     cursorY += 4;
 
@@ -672,15 +1751,20 @@ const ReportsManagement = () => {
     cursorY = addSimpleTable(
       doc,
       cursorY,
-      ['Loan', 'Amount', 'Balance', 'Applied'],
+      ['Loan', 'Amount', 'Balance', 'G-Settle', 'G-Outstanding', 'Applied'],
       activeLoans.length
-        ? activeLoans.map(loan => ([
-            getLoanLabel(loan.$id),
-            formatCurrency(loan.amount || 0),
-            formatCurrency(loan.balance || loan.amount || 0),
-            loan.createdAt ? new Date(loan.createdAt).toLocaleDateString() : ''
-          ]))
-        : [['No active loans', '', '', '']],
+        ? activeLoans.map((loan) => {
+            const settlement = getLoanGuarantorSettlement(loan);
+            return [
+              getLoanLabel(loan.$id),
+              formatCurrency(loan.amount || 0),
+              formatCurrency(loan.balance || loan.amount || 0),
+              settlement.securedOriginal > 0 ? `${settlement.settlementStage} (${settlement.settlementPercent}%)` : 'N/A',
+              formatCurrency(settlement.securedOutstanding || 0),
+              loan.createdAt ? new Date(loan.createdAt).toLocaleDateString() : ''
+            ];
+          })
+        : [['No active loans', '', '', '', '', '']],
       pdfMeta
     );
 
@@ -858,7 +1942,7 @@ const ReportsManagement = () => {
           <h2 className="text-lg font-semibold text-slate-900">Snapshot</h2>
           <p className="text-sm text-slate-500">High-level position from the ledger.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6">
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Total Members</div>
             <div className="text-2xl font-bold text-blue-600">{financialSummary.totalMembers}</div>
@@ -874,6 +1958,14 @@ const ReportsManagement = () => {
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Cash at Bank (Net)</div>
             <div className="text-2xl font-bold text-purple-600">{formatCurrency(financialSummary.cashAtBank)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Guarantor Secured Outstanding</div>
+            <div className="text-2xl font-bold text-blue-600">{formatCurrency(guarantorSettlementTotals.totalOutstanding || 0)}</div>
+          </div>
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Guarantor Settlement Progress</div>
+            <div className="text-2xl font-bold text-blue-600">{guarantorSettlementTotals.settlementPercent || 0}%</div>
           </div>
         </div>
       </section>
@@ -1015,6 +2107,13 @@ const ReportsManagement = () => {
               Export Loan Disbursements (CSV)
             </button>
             <button
+              onClick={exportGuarantorSettlementCsv}
+              className="w-full flex items-center justify-center px-4 py-2 bg-sky-700 text-white rounded-lg hover:bg-sky-800 transition-colors"
+            >
+              <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+              Export Guarantor Settlement (CSV)
+            </button>
+            <button
               onClick={() => exportToCSV(
                 getLedgerRows('TransferCharge').map(entry => ({
                   date: entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
@@ -1100,6 +2199,415 @@ const ReportsManagement = () => {
             Export Member Statement (PDF)
           </button>
         </div>
+      </div>
+
+      <div className="card mb-8">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">All Members Next Payment Summary</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-5">
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Members With Overdue Loans</div>
+            <div className="text-xl font-bold text-red-700">{portfolioHealthSummary.membersWithOverdue}</div>
+          </div>
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Total Overdue Amount</div>
+            <div className="text-xl font-bold text-red-700">{formatCurrency(portfolioHealthSummary.totalOverdueAmount)}</div>
+          </div>
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Oldest Overdue Date</div>
+            <div className="text-xl font-bold text-gray-900">
+              {portfolioHealthSummary.oldestOverdueDate
+                ? new Date(portfolioHealthSummary.oldestOverdueDate).toLocaleDateString()
+                : 'N/A'}
+            </div>
+          </div>
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Next 3 Months Forecast</div>
+            <div className="text-xl font-bold text-violet-700">{formatCurrency(portfolioHealthSummary.next3MonthsForecast)}</div>
+          </div>
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Members with Active Guarantor Exposure</div>
+            <div className="text-xl font-bold text-blue-700">{portfolioHealthSummary.membersWithActiveGuarantorExposure}</div>
+          </div>
+          <div className="card">
+            <div className="text-xs font-medium text-gray-500">Total Guarantor Outstanding</div>
+            <div className="text-xl font-bold text-blue-700">{formatCurrency(portfolioHealthSummary.totalGuarantorOutstanding || 0)}</div>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Health</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Outstanding Principal</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Guarantor Outstanding</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Next Due Installment</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Next Payment Total</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Overdue Amount</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Cleared</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Detail</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {allMembersPortfolioOverview.map(({ member, overview }) => (
+                <tr key={member.$id}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <div className="font-medium">{member.name}</div>
+                    <div className="text-xs text-gray-500">{member.membershipNumber}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getDueStateBadgeClass(getPortfolioMemberHealth(overview))}`}>
+                      {getPortfolioMemberHealth(overview)}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-amber-700">
+                    {formatCurrency(overview.totalOutstandingPrincipal)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-blue-700">
+                    {formatCurrency(overview.totalGuarantorOutstanding || 0)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                    {overview.nextDueMonth || '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-700">
+                    {formatCurrency(overview.nextPaymentTotal)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-700">
+                    {formatCurrency(overview.totalOverdueAmount || 0)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {overview.lastClearedAt ? new Date(overview.lastClearedAt).toLocaleDateString() : '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                    <button
+                      type="button"
+                      onClick={() => setPortfolioMemberId(member.$id)}
+                      className="text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {allMembersPortfolioOverview.length === 0 && (
+            <div className="text-sm text-gray-500 py-4">No member loan portfolio records available for this range.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="card mb-8">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Member Loan Portfolio Detail</h3>
+        <div className="flex flex-col md:flex-row md:items-end gap-4 mb-6">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Member</label>
+            <select
+              value={portfolioMemberId}
+              onChange={(e) => {
+                const memberId = e.target.value;
+                setPortfolioMemberId(memberId);
+              }}
+              className="form-input"
+            >
+              <option value="">Select member</option>
+              {reportData.members.map(member => (
+                <option key={member.$id} value={member.$id}>
+                  {member.name} ({member.membershipNumber})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Next Due Installment (Auto)</label>
+            <div className="form-input w-48 bg-gray-50">
+              {portfolioMemberId ? `Month ${portfolioMonthNumber}` : 'Select member'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={exportMemberLoanPortfolioCsv}
+            className="btn-secondary"
+            disabled={!portfolioMemberId}
+          >
+            Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={printMemberLoanPortfolio}
+            className="btn-primary"
+            disabled={!portfolioMemberId}
+          >
+            Print Portfolio
+          </button>
+        </div>
+
+        {portfolioMemberId ? (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Total Disbursed</div>
+                <div className="text-lg font-bold text-indigo-700">{formatCurrency(selectedPortfolioSummary.totalDisbursed)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Member Savings</div>
+                <div className="text-lg font-bold text-green-700">{formatCurrency(selectedPortfolioSummary.memberSavings)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Outstanding Principal</div>
+                <div className="text-lg font-bold text-amber-700">{formatCurrency(selectedPortfolioSummary.totalOutstandingPrincipal)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Net Member Position</div>
+                <div className={`text-lg font-bold ${selectedPortfolioSummary.netMemberPosition >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {formatCurrency(selectedPortfolioSummary.netMemberPosition)}
+                </div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Principal Cleared</div>
+                <div className="text-lg font-bold text-cyan-700">{formatCurrency(selectedPortfolioSummary.totalPrincipalCleared)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Cash Cleared</div>
+                <div className="text-lg font-bold text-emerald-700">{formatCurrency(selectedPortfolioSummary.totalCashCleared)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Total Next Payment</div>
+                <div className="text-lg font-bold text-violet-700">{formatCurrency(selectedPortfolioSummary.totalNextPayment)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Next 3 Months Forecast</div>
+                <div className="text-lg font-bold text-violet-700">{formatCurrency(selectedPortfolioSummary.totalNext3Months || 0)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Earliest Next Due Installment</div>
+                <div className="text-lg font-bold text-slate-700">{selectedPortfolioSummary.earliestNextDueMonth || 'N/A'}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Overdue Amount</div>
+                <div className="text-lg font-bold text-red-700">{formatCurrency(selectedPortfolioSummary.totalOverdueAmount || 0)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Overdue Loans</div>
+                <div className="text-lg font-bold text-red-700">{selectedPortfolioSummary.overdueLoanCount || 0}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Month {portfolioMonthNumber} Due</div>
+                <div className="text-lg font-bold text-blue-700">{formatCurrency(selectedPortfolioSummary.monthDueTotal)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Month {portfolioMonthNumber} Cleared</div>
+                <div className="text-lg font-bold text-green-700">{formatCurrency(selectedPortfolioSummary.monthClearedTotal)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Last Cleared</div>
+                <div className="text-lg font-bold text-gray-900">
+                  {selectedPortfolioSummary.latestClearedAt
+                    ? new Date(selectedPortfolioSummary.latestClearedAt).toLocaleDateString()
+                    : 'N/A'}
+                </div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Guarantor Secured Total</div>
+                <div className="text-lg font-bold text-blue-700">{formatCurrency(selectedPortfolioSummary.totalGuarantorSecuredOriginal || 0)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Guarantor Recovered</div>
+                <div className="text-lg font-bold text-blue-700">{formatCurrency(selectedPortfolioSummary.totalGuarantorRecovered || 0)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Guarantor Outstanding</div>
+                <div className="text-lg font-bold text-blue-700">{formatCurrency(selectedPortfolioSummary.totalGuarantorOutstanding || 0)}</div>
+              </div>
+              <div className="card">
+                <div className="text-xs font-medium text-gray-500">Guarantor Settlement Progress</div>
+                <div className="text-lg font-bold text-blue-700">{selectedPortfolioSummary.guarantorSettlementPercent || 0}%</div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto mb-6">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[140px]">Interest Basis</th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Health</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Outstanding Principal</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Cash Paid</th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[110px]">Cleared Progress</th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[110px]">Next Due Installment</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[95px]">Next Payment</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[90px]">Overdue</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-normal break-words leading-tight min-w-[105px]">Last Cleared</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {selectedPortfolioRows.map((row) => (
+                    <tr key={row.loan.$id}>
+                      <td className="px-6 py-4 text-sm text-gray-900">
+                        <div className="font-medium">{getLoanLabel(row.loan.$id)}</div>
+                        {(row.guarantorSettlement?.securedOriginal || 0) > 0 ? (
+                          <div className="mt-1 text-xs text-slate-500">
+                            {row.guarantorSettlement.settlementStage} | {row.guarantorSettlement.settlementPercent}% | {formatCurrency(row.guarantorSettlement.guarantorRecovered || 0)} / {formatCurrency(row.guarantorSettlement.securedOriginal || 0)}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs text-slate-400">No guarantor coverage</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.loan.status}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{row.interestBasis}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getDueStateBadgeClass(row.dueState)}`}>
+                          {row.dueState}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-amber-700">{formatCurrency(row.outstanding)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-emerald-700">{formatCurrency(row.paidTotal)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {row.installmentsCleared}/{row.installmentCount || 0} ({row.clearancePercent}%)
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {row.nextDue ? row.nextDue.month : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-700">
+                        {formatCurrency(row.nextDue?.amount || 0)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-700">
+                        {formatCurrency(row.overdueAmount || 0)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {row.lastClearedAt ? new Date(row.lastClearedAt).toLocaleDateString() : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                  {selectedPortfolioRows.length > 0 && (
+                    <tr className="bg-gray-50">
+                      <td className="px-6 py-3 text-sm font-semibold text-gray-900">Member Totals</td>
+                      <td className="px-6 py-3" />
+                      <td className="px-6 py-3" />
+                      <td className="px-6 py-3" />
+                      <td className="px-6 py-3 text-sm text-right font-semibold text-amber-700">
+                        {formatCurrency(selectedPortfolioSummary.totalOutstandingPrincipal)}
+                      </td>
+                      <td className="px-6 py-3 text-sm text-right font-semibold text-emerald-700">
+                        {formatCurrency(selectedPortfolioSummary.totalCashCleared)}
+                      </td>
+                      <td className="px-6 py-3" />
+                      <td className="px-6 py-3 text-sm text-center font-semibold text-gray-900">
+                        {selectedPortfolioSummary.earliestNextDueMonth || '-'}
+                      </td>
+                      <td className="px-6 py-3 text-sm text-right font-semibold text-blue-700">
+                        {formatCurrency(selectedPortfolioSummary.totalNextPayment)}
+                      </td>
+                      <td className="px-6 py-3 text-sm text-right font-semibold text-red-700">
+                        {formatCurrency(selectedPortfolioSummary.totalOverdueAmount || 0)}
+                      </td>
+                      <td className="px-6 py-3 text-sm text-gray-900">
+                        {selectedPortfolioSummary.latestClearedAt
+                          ? new Date(selectedPortfolioSummary.latestClearedAt).toLocaleDateString()
+                          : '-'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {selectedPortfolioRows.length === 0 && (
+                <div className="text-sm text-gray-500 py-4">No disbursed loans for this member in selected range.</div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="text-md font-semibold text-gray-900 mb-2">Cleared Payments Timeline</h4>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Schedule Month</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount Cleared</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Early Payment</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {selectedPortfolioTimeline.slice(0, 25).map((entry, index) => (
+                      <tr key={`${entry.loanId}-${entry.month}-${index}`}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {entry.paidAt ? new Date(entry.paidAt).toLocaleDateString() : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {getLoanLabel(entry.loanId)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                          {entry.month || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-emerald-700">
+                          {formatCurrency(entry.amount || 0)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                          {entry.isEarlyPayment ? 'Yes' : 'No'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {selectedPortfolioTimeline.length === 0 && (
+                  <div className="text-sm text-gray-500 py-4">No repayment entries found for this member in selected range.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <h4 className="text-md font-semibold text-gray-900 mb-2">Guarantor Settlement Progress (Derived)</h4>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Allocation Mode</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Settlement Stage</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Secured Total</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Recovered</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Outstanding</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Settlement Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {selectedPortfolioRows
+                      .filter((row) => (row.guarantorSettlement?.securedOriginal || 0) > 0)
+                      .map((row) => (
+                        <tr key={`guarantor-${row.loan.$id}`}>
+                          <td className="px-6 py-4 text-sm text-gray-900">{getLoanLabel(row.loan.$id)}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700">{formatAllocationStatus(row.guarantorSettlement?.allocationStatus)}</td>
+                          <td className="px-6 py-4 text-sm text-center">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGuarantorSettlementBadgeClass(row.guarantorSettlement?.settlementStage)}`}>
+                              {row.guarantorSettlement?.settlementStage || 'N/A'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-right text-gray-900">{formatCurrency(row.guarantorSettlement?.securedOriginal || 0)}</td>
+                          <td className="px-6 py-4 text-sm text-right text-blue-700">
+                            {formatCurrency(row.guarantorSettlement?.guarantorRecovered || 0)} ({row.guarantorSettlement?.settlementPercent || 0}%)
+                          </td>
+                          <td className="px-6 py-4 text-sm text-right text-red-700">{formatCurrency(row.guarantorSettlement?.securedOutstanding || 0)}</td>
+                          <td className="px-6 py-4 text-sm text-gray-900">
+                            {row.guarantorSettlement?.settlementCompletedAt
+                              ? new Date(row.guarantorSettlement.settlementCompletedAt).toLocaleDateString()
+                              : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+                {selectedPortfolioRows.filter((row) => (row.guarantorSettlement?.securedOriginal || 0) > 0).length === 0 && (
+                  <div className="text-sm text-gray-500 py-4">No guarantor-backed loans for this member in selected range.</div>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-500">Select a member to view owed totals, monthly dues, and cleared payments with dates.</p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

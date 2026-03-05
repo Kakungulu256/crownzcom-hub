@@ -4,6 +4,6 @@
   "description": "Create SACCO member with auth user",
   "main": "main.js",
   "dependencies": {
-    "node-appwrite": "^12.0.0"
+    "node-appwrite": "17.0.0"
   }
 }

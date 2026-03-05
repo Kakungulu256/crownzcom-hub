@@ -1,17 +1,43 @@
 const sdk = require('node-appwrite');
+const fs = require('fs');
+const path = require('path');
 
-const {
-  APPWRITE_ENDPOINT,
-  APPWRITE_PROJECT_ID,
-  APPWRITE_API_KEY,
-  DATABASE_ID,
-  MEMBERS_COLLECTION_ID,
-  LOANS_COLLECTION_ID,
-  FINANCIAL_CONFIG_COLLECTION_ID
-} = process.env;
+const parseEnvFile = (filePath) => {
+  if (!fs.existsSync(filePath)) return {};
+  const content = fs.readFileSync(filePath, 'utf8');
+  const lines = content.split(/\r?\n/);
+  const result = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIndex = trimmed.indexOf('=');
+    if (eqIndex === -1) continue;
+    const key = trimmed.slice(0, eqIndex).trim();
+    const value = trimmed.slice(eqIndex + 1).trim();
+    result[key] = value;
+  }
+  return result;
+};
+
+const envPath = path.resolve(__dirname, '..', '.env');
+const fileEnv = parseEnvFile(envPath);
+const readEnv = (...keys) => keys.map((key) => process.env[key] || fileEnv[key]).find(Boolean) || '';
+
+const APPWRITE_ENDPOINT = readEnv('APPWRITE_ENDPOINT', 'VITE_APPWRITE_ENDPOINT');
+const APPWRITE_PROJECT_ID = readEnv('APPWRITE_PROJECT_ID', 'VITE_APPWRITE_PROJECT_ID');
+const APPWRITE_API_KEY = readEnv('APPWRITE_API_KEY', 'VITE_APPWRITE_API_KEY');
+const DATABASE_ID = readEnv('DATABASE_ID', 'VITE_APPWRITE_DATABASE_ID');
+const MEMBERS_COLLECTION_ID = readEnv('MEMBERS_COLLECTION_ID', 'VITE_APPWRITE_MEMBERS_COLLECTION_ID');
+const LOANS_COLLECTION_ID = readEnv('LOANS_COLLECTION_ID', 'VITE_APPWRITE_LOANS_COLLECTION_ID');
+const FINANCIAL_CONFIG_COLLECTION_ID = readEnv(
+  'FINANCIAL_CONFIG_COLLECTION_ID',
+  'VITE_APPWRITE_FINANCIAL_CONFIG_COLLECTION_ID'
+);
 
 if (!APPWRITE_ENDPOINT || !APPWRITE_PROJECT_ID || !APPWRITE_API_KEY || !DATABASE_ID) {
-  console.error('Missing required env vars: APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_API_KEY, DATABASE_ID');
+  console.error(
+    'Missing required env vars: APPWRITE/VITE endpoint, project id, api key, and database id.'
+  );
   process.exit(1);
 }
 
@@ -25,10 +51,13 @@ const databases = new sdk.Databases(client);
 
 const DEFAULT_FINANCIAL_CONFIG = {
   loanInterestRate: 2,
+  longTermInterestRate: 1.5,
+  interestCalculationMode: 'flat',
   loanEligibilityPercentage: 80,
   defaultBankCharge: 5000,
   earlyRepaymentPenalty: 1,
   maxLoanDuration: 6,
+  longTermMaxRepaymentMonths: 24,
   minLoanAmount: 10000,
   maxLoanAmount: 5000000
 };

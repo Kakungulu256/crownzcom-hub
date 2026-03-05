@@ -1,5 +1,12 @@
 const sdk = require('node-appwrite');
 const { Client, Databases, Query } = sdk;
+const { allocateProRataByOutstanding } = require('./waterfall');
+const {
+  INTEREST_CALCULATION_MODES,
+  normalizeInterestCalculationMode,
+  calculateScheduledInterest,
+  calculateEarlyPayoffInterest
+} = require('../shared/loan-calculations');
 
 const client = new Client()
   .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT)
@@ -13,6 +20,7 @@ const COLLECTIONS = {
   LOANS: process.env.LOANS_COLLECTION_ID,
   LOAN_CHARGES: process.env.LOAN_CHARGES_COLLECTION_ID,
   LOAN_REPAYMENTS: process.env.LOAN_REPAYMENTS_COLLECTION_ID,
+  LOAN_GUARANTORS: process.env.LOAN_GUARANTORS_COLLECTION_ID,
   SAVINGS: process.env.SAVINGS_COLLECTION_ID,
   FINANCIAL_CONFIG: process.env.FINANCIAL_CONFIG_COLLECTION_ID,
   LEDGER_ENTRIES: process.env.LEDGER_ENTRIES_COLLECTION_ID
@@ -45,14 +53,75 @@ const normalizeMemberId = (value) => {
   return typeof value === 'object' && value.$id ? value.$id : value;
 };
 
+const toInteger = (value, fallback = 0) => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toFloat = (value, fallback = 0) => {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+async function listAllDocuments(collectionId, queries = []) {
+  const all = [];
+  let cursor = null;
+  const limit = 100;
+
+  while (true) {
+    const pageQueries = [
+      ...queries,
+      Query.limit(limit),
+      ...(cursor ? [Query.cursorAfter(cursor)] : [])
+    ];
+    const response = await databases.listDocuments(DATABASE_ID, collectionId, pageQueries);
+    all.push(...response.documents);
+    if (response.documents.length < limit) break;
+    cursor = response.documents[response.documents.length - 1].$id;
+  }
+
+  return all;
+}
+
+function getLoanMonthlyRate(loan, config) {
+  const storedPercent = toFloat(loan.monthlyInterestRateApplied, NaN);
+  if (Number.isFinite(storedPercent) && storedPercent >= 0) {
+    return storedPercent / 100;
+  }
+
+  return loan.loanType === 'long_term'
+    ? toFloat(config.longTermInterestRate, 1.5) / 100
+    : toFloat(config.loanInterestRate, 2) / 100;
+}
+
+function getLoanCalculationContext(loan, config) {
+  return {
+    mode: normalizeInterestCalculationMode(
+      loan.interestCalculationModeApplied || config.interestCalculationMode
+    ),
+    monthlyRate: getLoanMonthlyRate(loan, config)
+  };
+}
+
 const DEFAULT_FINANCIAL_CONFIG = {
   loanInterestRate: 2,
+  longTermInterestRate: 1.5,
+  interestCalculationMode: 'flat',
   loanEligibilityPercentage: 80,
   defaultBankCharge: 5000,
   earlyRepaymentPenalty: 1,
   maxLoanDuration: 6,
+  longTermMaxRepaymentMonths: 24,
   minLoanAmount: 10000,
   maxLoanAmount: 5000000
+};
+
+const parseBody = (body) => {
+  if (!body) return {};
+  if (typeof body === 'string') {
+    return JSON.parse(body);
+  }
+  return body;
 };
 
 async function getFinancialConfig() {
@@ -82,7 +151,7 @@ async function getFinancialConfig() {
 
 module.exports = async ({ req, res, log, error }) => {
   try {
-    const { action, ...data } = JSON.parse(req.body);
+    const { action, ...data } = parseBody(req.body);
 
     switch (action) {
       case 'approveLoan':
@@ -228,9 +297,12 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
   }
 
   const config = await getFinancialConfig();
-  const monthNumber = parseInt(month);
+  const monthNumber = toInteger(month, 0);
+  if (monthNumber <= 0) {
+    throw new Error('Invalid repayment month');
+  }
   const repaymentPlan = loan.repaymentPlan ? JSON.parse(loan.repaymentPlan) : [];
-  const planItem = repaymentPlan.find(item => parseInt(item.month) === monthNumber);
+  const planItem = repaymentPlan.find(item => toInteger(item.month, 0) === monthNumber);
   if (!planItem && !isEarlyPayment) {
     throw new Error('Repayment schedule not found for selected month');
   }
@@ -240,37 +312,63 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
     COLLECTIONS.LOAN_CHARGES,
     [Query.equal('loanId', loanId)]
   );
-  const bankCharge = chargeResponse.documents.reduce((sum, charge) => sum + (parseInt(charge.amount) || 0), 0);
+  const bankCharge = chargeResponse.documents.reduce((sum, charge) => sum + toInteger(charge.amount, 0), 0);
 
   const existingRepayments = await databases.listDocuments(
     DATABASE_ID,
     COLLECTIONS.LOAN_REPAYMENTS,
     [Query.equal('loanId', loanId)]
   );
-  const hasFirstMonthRepayment = existingRepayments.documents.some(r => parseInt(r.month) === 1);
+  const hasFirstMonthRepayment = existingRepayments.documents.some(r => toInteger(r.month, 0) === 1);
 
   let paymentAmount = 0;
   let principalPaid = 0;
-  const currentBalance = loan.balance || loan.amount;
+  let interestPaid = 0;
+  const currentBalance = Math.max(0, toInteger(loan.balance ?? loan.amount, 0));
+  const { mode: interestCalculationMode, monthlyRate } = getLoanCalculationContext(loan, config);
+  const earlyPenaltyRate = toFloat(config.earlyRepaymentPenalty, 1) / 100;
 
   if (isEarlyPayment) {
-    const interestRate = (config.loanInterestRate + config.earlyRepaymentPenalty) / 100;
-    const interestAmount = loan.amount * interestRate;
+    const interestBreakdown = calculateEarlyPayoffInterest({
+      loanAmount: loan.amount,
+      currentBalance,
+      monthlyRate,
+      earlyPenaltyRate,
+      interestCalculationMode
+    });
+    const interestAmount = interestBreakdown.totalInterest;
     const chargeAmount = monthNumber === 1 && !hasFirstMonthRepayment ? bankCharge : 0;
     paymentAmount = Math.ceil(currentBalance + interestAmount + chargeAmount);
     principalPaid = currentBalance;
+    interestPaid = interestAmount;
   } else {
+    const scheduledPayment = toInteger(planItem.payment ?? planItem.amount, 0);
+    const scheduledInterest = calculateScheduledInterest({
+      loanAmount: loan.amount,
+      planItem,
+      currentBalance,
+      monthlyRate,
+      interestCalculationMode
+    });
+    const netWithoutCharges = Math.max(0, scheduledPayment);
+    const normalizedInterest = Math.min(Math.max(0, scheduledInterest), netWithoutCharges);
+    const scheduledPrincipal = Math.max(
+      0,
+      toInteger(planItem.principal, netWithoutCharges - normalizedInterest)
+    );
     const chargeAmount = monthNumber === 1 && !hasFirstMonthRepayment ? bankCharge : 0;
-    paymentAmount = Math.ceil(planItem.payment + chargeAmount);
-    principalPaid = planItem.principal;
+    paymentAmount = Math.ceil(netWithoutCharges + chargeAmount);
+    interestPaid = normalizedInterest;
+    principalPaid = Math.max(0, Math.min(currentBalance, netWithoutCharges - interestPaid, scheduledPrincipal));
   }
 
   // Create repayment record
+  const repaymentTimestamp = paidAt ? new Date(paidAt).toISOString() : new Date().toISOString();
   const repaymentData = {
     loanId: loanId,
     amount: paymentAmount,
     month: monthNumber,
-    paidAt: paidAt ? new Date(paidAt).toISOString() : new Date().toISOString(),
+    paidAt: repaymentTimestamp,
     isEarlyPayment: !!isEarlyPayment
   };
 
@@ -284,20 +382,102 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
     notes: `Repayment month ${monthNumber}`
   });
 
-  // Update loan balance (principal only)
+  let guarantorPrincipalAllocation = 0;
+  let borrowerPrincipalAllocation = principalPaid;
+
+  const existingGuarantorRecovered = toInteger(loan.guarantorPrincipalRecoveredTotal, 0);
+  const existingBorrowerRecovered = toInteger(loan.borrowerPrincipalRecoveredTotal, 0);
+  const existingSecuredOriginalTotal = toInteger(loan.securedOriginalTotal, 0);
+  const hasGuarantorWorkflow = Boolean(loan.guarantorRequired) || existingSecuredOriginalTotal > 0;
+  let securedOutstandingTotal = toInteger(loan.securedOutstandingTotal, 0);
+  let settlementCompletedAt = loan.guarantorSettlementCompletedAt || null;
+
+  if (hasGuarantorWorkflow && COLLECTIONS.LOAN_GUARANTORS) {
+    const approvedRequests = await listAllDocuments(
+      COLLECTIONS.LOAN_GUARANTORS,
+      [Query.equal('loanId', loanId), Query.equal('status', 'approved')]
+    );
+
+    const requestOutstandingTotal = approvedRequests.reduce(
+      (sum, request) =>
+        sum + toInteger(request.securedOutstanding ?? request.approvedAmount ?? request.guaranteedAmount, 0),
+      0
+    );
+    const securedOutstandingBefore = Math.max(0, requestOutstandingTotal);
+    securedOutstandingTotal = securedOutstandingBefore;
+
+    if (securedOutstandingBefore > 0 && principalPaid > 0) {
+      const allocation = allocateProRataByOutstanding(approvedRequests, principalPaid);
+      guarantorPrincipalAllocation = allocation.allocatable;
+      borrowerPrincipalAllocation = Math.max(0, principalPaid - guarantorPrincipalAllocation);
+
+      if (allocation.allocations.length > 0) {
+        await Promise.all(
+          allocation.allocations.map((item) =>
+            databases.updateDocument(
+              DATABASE_ID,
+              COLLECTIONS.LOAN_GUARANTORS,
+              item.requestId,
+              {
+                securedOutstanding: item.nextOutstanding,
+                updatedAt: repaymentTimestamp
+              }
+            )
+          )
+        );
+      }
+
+      securedOutstandingTotal = Math.max(0, securedOutstandingBefore - guarantorPrincipalAllocation);
+      if (securedOutstandingBefore > 0 && securedOutstandingTotal === 0 && !settlementCompletedAt) {
+        settlementCompletedAt = repaymentTimestamp;
+      }
+    } else {
+      borrowerPrincipalAllocation = principalPaid;
+      if (securedOutstandingBefore === 0 && !settlementCompletedAt && existingSecuredOriginalTotal > 0) {
+        settlementCompletedAt = repaymentTimestamp;
+      }
+    }
+  }
+
+  // Keep loan financial balance tied to total principal repayment.
   const newBalance = Math.max(0, currentBalance - principalPaid);
   const status = newBalance === 0 ? 'completed' : 'active';
+  const repaymentAllocationStatus = !hasGuarantorWorkflow
+    ? 'not_required'
+    : securedOutstandingTotal > 0
+      ? 'guarantor_priority'
+      : 'borrower_priority';
 
-  await databases.updateDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId, {
+  const loanUpdates = {
     balance: newBalance,
-    status: status
-  });
+    status: status,
+    guarantorPrincipalRecoveredTotal: existingGuarantorRecovered + guarantorPrincipalAllocation,
+    borrowerPrincipalRecoveredTotal: existingBorrowerRecovered + borrowerPrincipalAllocation,
+    securedOutstandingTotal: hasGuarantorWorkflow ? securedOutstandingTotal : 0,
+    repaymentAllocationStatus,
+    lastRepaymentAllocationAt: repaymentTimestamp
+  };
+  if (settlementCompletedAt) {
+    loanUpdates.guarantorSettlementCompletedAt = settlementCompletedAt;
+  }
+
+  await databases.updateDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId, loanUpdates);
 
   return { 
     success: true, 
     message: 'Repayment recorded successfully',
     newBalance: newBalance,
-    status: status
+    status: status,
+    allocation: {
+      interestPaid,
+      principalPaid,
+      guarantorPrincipalAllocation,
+      borrowerPrincipalAllocation,
+      securedOutstandingTotal,
+      repaymentAllocationStatus,
+      interestCalculationMode,
+      monthlyRateApplied: Number((monthlyRate * 100).toFixed(6))
+    }
   };
 }
 

@@ -3,10 +3,13 @@ import { ID } from 'appwrite';
 
 export const DEFAULT_FINANCIAL_CONFIG = {
   loanInterestRate: 2,
+  longTermInterestRate: 1.5,
+  interestCalculationMode: 'flat',
   loanEligibilityPercentage: 80,
   defaultBankCharge: 5000,
   earlyRepaymentPenalty: 1,
   maxLoanDuration: 6,
+  longTermMaxRepaymentMonths: 24,
   minLoanAmount: 10000,
   maxLoanAmount: 5000000
 };

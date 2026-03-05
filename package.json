@@ -8,7 +8,7 @@
     "appwrite": "^13.0.0",
     "date-fns": "^2.29.0",
     "jspdf": "^2.5.0",
-    "node-appwrite": "^22.0.0",
+    "node-appwrite": "17.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.43.0",
@@ -29,6 +29,21 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "migrate:data": "node scripts/migrate-appwrite-data.js"
+    "db:clear": "node scripts/clear-collections.cjs --yes",
+    "db:provision": "node scripts/provision-appwrite.mjs",
+    "db:permissions": "node scripts/apply-permissions.mjs",
+    "db:permissions:public": "node scripts/apply-permissions.mjs --public",
+    "db:reset": "npm run db:clear && npm run db:provision && npm run db:permissions",
+    "test:waterfall": "node tests/waterfall-repayment.test.js",
+    "test:interest-calculation": "node tests/interest-calculation.test.js",
+    "test:loan-calculations": "npm run test:waterfall && npm run test:interest-calculation",
+    "verify:longterm-rollout": "node scripts/verify-longterm-rollout.js",
+    "migrate:data": "node scripts/migrate-appwrite-data.js",
+    "migrate:financial-config-v2": "node scripts/migrate-financial-config-schema-v2.js",
+    "migrate:financial-config-v3": "node scripts/migrate-financial-config-schema-v3.js",
+    "migrate:loan-schema-v2": "node scripts/migrate-loan-schema-v2.js",
+    "migrate:loan-schema-v3": "node scripts/migrate-loan-schema-v3.js",
+    "migrate:loan-schema-v4": "node scripts/migrate-loan-schema-v4.js",
+    "create:loan-guarantors": "node scripts/create-loan-guarantors-collection.js"
   }
 }

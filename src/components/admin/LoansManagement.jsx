@@ -7,6 +7,17 @@ import toast from 'react-hot-toast';
 import { listAllDocuments } from '../../lib/pagination';
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 
+const LOAN_FINAL_APPROVAL_FUNCTION_ID =
+  import.meta.env.VITE_APPWRITE_LOAN_FINAL_APPROVAL_FUNCTION_ID ||
+  import.meta.env.VITE_APPWRITE_FINAL_APPROVAL_FUNCTION_ID ||
+  'loan-final-approval';
+
+const FINAL_APPROVAL_STATUSES = new Set(['pending', 'pending_admin_approval']);
+const INTEREST_CALCULATION_MODES = {
+  FLAT: 'flat',
+  REDUCING_BALANCE: 'reducing_balance'
+};
+
 const LoansManagement = () => {
   const [loans, setLoans] = useState([]);
   const [loanCharges, setLoanCharges] = useState([]);
@@ -100,11 +111,33 @@ const LoansManagement = () => {
     }
   };
 
+  const callLoanFinalApprovalFunction = async (loanId) => {
+    try {
+      const response = await functions.createExecution(
+        LOAN_FINAL_APPROVAL_FUNCTION_ID,
+        JSON.stringify({ action: 'finalApproveLoan', loanId })
+      );
+      if (!response.responseBody) {
+        throw new Error('Loan final-approval function returned an empty response. Check function logs for details.');
+      }
+      const result = JSON.parse(response.responseBody);
+      if (!result.success) {
+        throw new Error(result.error || 'Loan final approval failed.');
+      }
+      return result;
+    } catch (error) {
+      console.error('Final approval function error:', error);
+      throw error;
+    }
+  };
+
+  const canFinalApproveLoan = (loan) => FINAL_APPROVAL_STATUSES.has(loan?.status);
+
   const approveLoan = async (loan) => {
     try {
       setLoadingAction(`approve:${loan.$id}`);
-      await callLoanFunction('approveLoan', { loanId: loan.$id });
-      toast.success('Loan approved successfully');
+      await callLoanFinalApprovalFunction(loan.$id);
+      toast.success('Loan final-approved successfully');
       setSelectedLoan(loan);
       setEditingCharge(null);
       reset();
@@ -257,11 +290,31 @@ const LoansManagement = () => {
 
   const getMemberAvailableCredit = (memberId) => {
     const totalSavings = getMemberSavings(memberId);
-    const maxLoanAmount = totalSavings * 0.8;
+    const maxLoanAmount = totalSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
     const activeLoansAmount = loans
       .filter(loan => normalizeMemberId(loan.memberId) === normalizeMemberId(memberId) && loan.status === 'active')
       .reduce((total, loan) => total + (loan.balance || loan.amount), 0);
     return Math.max(0, maxLoanAmount - activeLoansAmount);
+  };
+
+  const getMemberTotalLoanPrincipal = (memberId) => {
+    const targetId = normalizeMemberId(memberId);
+    return loans
+      .filter(loan =>
+        normalizeMemberId(loan.memberId) === targetId &&
+        ['active', 'approved', 'completed'].includes(loan.status)
+      )
+      .reduce((total, loan) => total + (parseInt(loan.amount, 10) || 0), 0);
+  };
+
+  const getMemberOutstandingLoanBalance = (memberId) => {
+    const targetId = normalizeMemberId(memberId);
+    return loans
+      .filter(loan =>
+        normalizeMemberId(loan.memberId) === targetId &&
+        (loan.status === 'active' || loan.status === 'approved')
+      )
+      .reduce((total, loan) => total + (parseInt(loan.balance, 10) || parseInt(loan.amount, 10) || 0), 0);
   };
 
   const normalizeLoanId = (value) => {
@@ -377,6 +430,38 @@ const LoansManagement = () => {
       .filter(item => item && !item.alreadyPaid);
   };
 
+  const normalizeInterestCalculationMode = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      ? INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      : INTEREST_CALCULATION_MODES.FLAT;
+  };
+
+  const getLoanInterestCalculationMode = (loan) => normalizeInterestCalculationMode(
+    loan?.interestCalculationModeApplied || financialConfig.interestCalculationMode
+  );
+
+  const getLoanMonthlyRatePercent = (loan) => {
+    const storedRate = Number(loan?.monthlyInterestRateApplied);
+    if (Number.isFinite(storedRate) && storedRate >= 0) return storedRate;
+    return loan?.loanType === 'long_term'
+      ? Number(financialConfig.longTermInterestRate || 1.5)
+      : Number(financialConfig.loanInterestRate || 2);
+  };
+
+  const getLoanInterestBasisLabel = (loan) => {
+    const mode = getLoanInterestCalculationMode(loan);
+    const modeLabel = mode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      ? 'Reducing Balance'
+      : 'Flat Principal';
+    return `${modeLabel} @ ${getLoanMonthlyRatePercent(loan)}%`;
+  };
+
+  const getMemberMonthDueTotal = (memberId, monthNumber) => {
+    return getMemberMonthlyDuePayments(memberId, monthNumber)
+      .reduce((sum, item) => sum + (parseInt(item.amount, 10) || 0), 0);
+  };
+
   const getNextUnpaidMonth = (memberId) => {
     const activeMemberLoans = loans.filter(
       loan => normalizeMemberId(loan.memberId) === normalizeMemberId(memberId) && loan.status === 'active'
@@ -400,11 +485,15 @@ const LoansManagement = () => {
   };
 
   const getEarlyPayoffAmount = (loan, monthNumber) => {
-    const principal = loan.amount;
-    const remainingBalance = loan.balance || loan.amount;
-    const monthlyRate = (financialConfig.loanInterestRate || 2) / 100;
+    const principal = parseInt(loan.amount, 10) || 0;
+    const remainingBalance = parseInt(loan.balance, 10) || principal;
+    const monthlyRate = getLoanMonthlyRatePercent(loan) / 100;
     const penaltyRate = (financialConfig.earlyRepaymentPenalty || 1) / 100;
-    const interestAmount = principal * (monthlyRate + penaltyRate);
+    const mode = getLoanInterestCalculationMode(loan);
+    const interestBase = mode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+      ? remainingBalance
+      : principal;
+    const interestAmount = (interestBase * monthlyRate) + (interestBase * penaltyRate);
     const bankCharge = parseInt(monthNumber) === 1 ? getLoanChargeTotal(loan.$id) : 0;
     return Math.ceil(remainingBalance + interestAmount + bankCharge);
   };
@@ -419,10 +508,122 @@ const LoansManagement = () => {
     }));
   };
 
-  const pendingLoans = loans.filter(loan => loan.status === 'pending');
+  const pendingFinalApprovalLoans = loans.filter(canFinalApproveLoan);
+  const pendingGuarantorLoans = loans.filter(loan => loan.status === 'pending_guarantor_approval');
   const activeLoans = loans.filter(loan => loan.status === 'active' || loan.status === 'approved');
   const rejectedLoans = loans.filter(loan => loan.status === 'rejected');
-  const completedLoans = loans.filter(loan => loan.status === 'completed');
+  const selectedMemberId = selectedMember?.$id || null;
+  const selectedMemberLoans = selectedMemberId ? getMemberLoans(selectedMemberId) : [];
+  const selectedMemberSavings = selectedMemberId ? getMemberSavings(selectedMemberId) : 0;
+  const selectedMemberTotalLoanPrincipal = selectedMemberId ? getMemberTotalLoanPrincipal(selectedMemberId) : 0;
+  const selectedMemberOutstandingLoanBalance = selectedMemberId ? getMemberOutstandingLoanBalance(selectedMemberId) : 0;
+  const selectedMemberNetSavingsAfterLoans = selectedMemberSavings - selectedMemberOutstandingLoanBalance;
+  const selectedMemberMonthDuePayments = selectedMemberId
+    ? getMemberMonthlyDuePayments(selectedMemberId, memberPaymentMonth)
+    : [];
+  const selectedMemberMonthDueTotal = selectedMemberId ? getMemberMonthDueTotal(selectedMemberId, memberPaymentMonth) : 0;
+  const selectedMemberMonthDueByLoan = new Map(
+    selectedMemberMonthDuePayments.map((item) => [item.loan.$id, item.amount])
+  );
+  const selectedMemberMaxLoanAmount = selectedMemberSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
+  const selectedMemberAvailableCredit = selectedMemberId ? getMemberAvailableCredit(selectedMemberId) : 0;
+
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  const printSelectedMemberSummary = () => {
+    if (!selectedMemberId) return;
+
+    const generatedAt = new Date();
+    const loanRows = selectedMemberLoans.map((loan) => {
+      const monthlyDue = selectedMemberMonthDueByLoan.get(loan.$id) || 0;
+      const balance = parseInt(loan.balance, 10) || parseInt(loan.amount, 10) || 0;
+      return `
+        <tr>
+          <td>${escapeHtml(new Date(loan.createdAt).toLocaleDateString())}</td>
+          <td>${escapeHtml(formatCurrency(loan.amount))}</td>
+          <td>${escapeHtml(formatCurrency(balance))}</td>
+          <td>${escapeHtml(loan.status)}</td>
+          <td>${escapeHtml(formatCurrency(monthlyDue))}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Member Loan Summary</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+            h1, h2 { margin: 0 0 8px 0; }
+            .meta { margin-bottom: 18px; font-size: 13px; color: #4b5563; }
+            .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0 20px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+            .label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+            .value { font-size: 15px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 13px; text-align: left; }
+            th { background: #f9fafb; }
+            .right { text-align: right; }
+          </style>
+        </head>
+        <body>
+          <h1>Member Loan & Savings Summary</h1>
+          <div class="meta">
+            <div>Generated: ${escapeHtml(generatedAt.toLocaleString())}</div>
+            <div>Member: ${escapeHtml(selectedMember?.name || '')}</div>
+            <div>Membership Number: ${escapeHtml(selectedMember?.membershipNumber || '')}</div>
+            <div>Month Number Reviewed: ${escapeHtml(memberPaymentMonth)}</div>
+          </div>
+
+          <div class="grid">
+            <div class="card"><div class="label">Total Savings</div><div class="value">${escapeHtml(formatCurrency(selectedMemberSavings))}</div></div>
+            <div class="card"><div class="label">Total Loans (Principal)</div><div class="value">${escapeHtml(formatCurrency(selectedMemberTotalLoanPrincipal))}</div></div>
+            <div class="card"><div class="label">Outstanding Loans</div><div class="value">${escapeHtml(formatCurrency(selectedMemberOutstandingLoanBalance))}</div></div>
+            <div class="card"><div class="label">Savings Less Outstanding Loans</div><div class="value">${escapeHtml(formatCurrency(selectedMemberNetSavingsAfterLoans))}</div></div>
+            <div class="card"><div class="label">Month ${escapeHtml(memberPaymentMonth)} Total Due</div><div class="value">${escapeHtml(formatCurrency(selectedMemberMonthDueTotal))}</div></div>
+            <div class="card"><div class="label">Available Credit</div><div class="value">${escapeHtml(formatCurrency(selectedMemberAvailableCredit))}</div></div>
+          </div>
+
+          <h2>Loans</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Applied</th>
+                <th class="right">Amount</th>
+                <th class="right">Balance</th>
+                <th>Status</th>
+                <th class="right">Month ${escapeHtml(memberPaymentMonth)} Due</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${loanRows || '<tr><td colspan="5">No loans found for this member.</td></tr>'}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open('', '_blank', 'width=1100,height=800');
+    if (!printWindow) {
+      toast.error('Please allow pop-ups to print this summary.');
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  };
 
   if (loading) {
     return <div className="animate-pulse">Loading loans data...</div>;
@@ -437,10 +638,14 @@ const LoansManagement = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
         <div className="card">
-          <div className="text-sm font-medium text-gray-500">Pending</div>
-          <div className="text-2xl font-bold text-yellow-600">{pendingLoans.length}</div>
+          <div className="text-sm font-medium text-gray-500">Pending Admin</div>
+          <div className="text-2xl font-bold text-yellow-600">{pendingFinalApprovalLoans.length}</div>
+        </div>
+        <div className="card">
+          <div className="text-sm font-medium text-gray-500">Waiting Guarantors</div>
+          <div className="text-2xl font-bold text-amber-600">{pendingGuarantorLoans.length}</div>
         </div>
         <div className="card">
           <div className="text-sm font-medium text-gray-500">Active</div>
@@ -475,8 +680,10 @@ const LoansManagement = () => {
               if (memberId) {
                 const member = members.find(m => m.$id === memberId);
                 setSelectedMember(member);
+                setMemberPaymentMonth(getNextUnpaidMonth(memberId));
               } else {
                 setSelectedMember(null);
+                setMemberPaymentMonth(1);
               }
             }}
           >
@@ -490,7 +697,17 @@ const LoansManagement = () => {
         </div>
 
         {selectedMember && (
-          <div className="mb-6">
+          <div className="mb-6 flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Month Number</label>
+              <input
+                type="number"
+                min="1"
+                value={memberPaymentMonth}
+                onChange={(e) => setMemberPaymentMonth(parseInt(e.target.value, 10) || 1)}
+                className="w-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
             <button
               onClick={() => {
                 const nextMonth = getNextUnpaidMonth(selectedMember.$id);
@@ -502,13 +719,20 @@ const LoansManagement = () => {
             >
               Record Monthly Payments
             </button>
+            <button
+              type="button"
+              onClick={printSelectedMemberSummary}
+              className="btn-secondary"
+            >
+              Print Member Summary
+            </button>
           </div>
         )}
 
         {selectedMember && (
           <div>
             <div className="bg-gray-50 p-4 rounded-lg mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
                 <div>
                   <div className="text-sm font-medium text-gray-500">Member</div>
                   <div className="text-lg font-semibold">{selectedMember.name}</div>
@@ -516,19 +740,43 @@ const LoansManagement = () => {
                 <div>
                   <div className="text-sm font-medium text-gray-500">Total Savings</div>
                   <div className="text-lg font-semibold text-green-600">
-                    {formatCurrency(getMemberSavings(selectedMember.$id))}
+                    {formatCurrency(selectedMemberSavings)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-500">Total Loans (Principal)</div>
+                  <div className="text-lg font-semibold text-indigo-600">
+                    {formatCurrency(selectedMemberTotalLoanPrincipal)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-500">Outstanding Loan Balance</div>
+                  <div className="text-lg font-semibold text-amber-600">
+                    {formatCurrency(selectedMemberOutstandingLoanBalance)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-500">Savings Less Outstanding Loans</div>
+                  <div className={`text-lg font-semibold ${selectedMemberNetSavingsAfterLoans >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {formatCurrency(selectedMemberNetSavingsAfterLoans)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-500">Month {memberPaymentMonth} Total Due</div>
+                  <div className="text-lg font-semibold text-blue-600">
+                    {formatCurrency(selectedMemberMonthDueTotal)}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500">Max Loan Amount</div>
-                  <div className="text-lg font-semibold text-blue-600">
-                    {formatCurrency(getMemberSavings(selectedMember.$id) * 0.8)}
+                  <div className="text-lg font-semibold text-cyan-600">
+                    {formatCurrency(selectedMemberMaxLoanAmount)}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500">Available Credit</div>
                   <div className="text-lg font-semibold text-purple-600">
-                    {formatCurrency(getMemberAvailableCredit(selectedMember.$id))}
+                    {formatCurrency(selectedMemberAvailableCredit)}
                   </div>
                 </div>
               </div>
@@ -544,6 +792,9 @@ const LoansManagement = () => {
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Balance
                     </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Month {memberPaymentMonth} Due
+                    </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
@@ -553,17 +804,24 @@ const LoansManagement = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {getMemberLoans(selectedMember.$id).map((loan) => (
+                  {selectedMemberLoans.map((loan) => {
+                    const monthDue = selectedMemberMonthDueByLoan.get(loan.$id) || 0;
+                    return (
                     <tr key={loan.$id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatCurrency(loan.amount)}
+                        <div>{formatCurrency(loan.amount)}</div>
+                        <div className="text-[11px] text-gray-500">{getLoanInterestBasisLabel(loan)}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
                         {formatCurrency(loan.balance || loan.amount)}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-blue-600">
+                        {formatCurrency(monthDue)}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          loan.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          (loan.status === 'pending' || loan.status === 'pending_admin_approval') ? 'bg-yellow-100 text-yellow-800' :
+                          loan.status === 'pending_guarantor_approval' ? 'bg-amber-100 text-amber-800' :
                           loan.status === 'active' ? 'bg-blue-100 text-blue-800' :
                           loan.status === 'completed' ? 'bg-green-100 text-green-800' :
                           'bg-red-100 text-red-800'
@@ -573,7 +831,7 @@ const LoansManagement = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                         <div className="flex justify-center space-x-2">
-                          {loan.status === 'pending' && (
+                          {canFinalApproveLoan(loan) && (
                             <>
                               <button
                                 onClick={() => approveLoan(loan)}
@@ -600,6 +858,9 @@ const LoansManagement = () => {
                                 )}
                               </button>
                             </>
+                          )}
+                          {loan.status === 'pending_guarantor_approval' && (
+                            <span className="text-xs text-amber-700">Awaiting guarantor approvals</span>
                           )}
                           {(loan.status === 'active' || loan.status === 'approved') && (
                             <>
@@ -656,12 +917,12 @@ const LoansManagement = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
 
-            {getMemberLoans(selectedMember.$id).length === 0 && (
+            {selectedMemberLoans.length === 0 && (
               <div className="text-center py-8 text-gray-500">
                 No loans found for this member
               </div>
@@ -670,10 +931,10 @@ const LoansManagement = () => {
         )}
       </div>
 
-      {/* Pending Loans */}
-      {pendingLoans.length > 0 && (
+      {/* Pending Admin Approval Loans */}
+      {pendingFinalApprovalLoans.length > 0 && (
         <div className="card mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Pending Applications</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Pending Admin Approval</h3>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -693,9 +954,9 @@ const LoansManagement = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {pendingLoans.map((loan) => {
+                {pendingFinalApprovalLoans.map((loan) => {
                   const memberSavings = getMemberSavings(loan.memberId);
-                  const maxLoanAmount = memberSavings * 0.8;
+                  const maxLoanAmount = memberSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
                   const isEligible = loan.amount <= maxLoanAmount;
                   
                   return (
@@ -722,24 +983,88 @@ const LoansManagement = () => {
                         <div className="flex justify-center space-x-2">
                           <button
                             onClick={() => approveLoan(loan)}
-                            disabled={!isEligible}
-                            className={`${isEligible ? 'text-green-600 hover:text-green-900' : 'text-gray-400 cursor-not-allowed'}`}
+                            disabled={loadingAction === `approve:${loan.$id}`}
+                            className="text-green-600 hover:text-green-900"
                             title="Approve"
                           >
-                            <CheckIcon className="h-5 w-5" />
+                            {loadingAction === `approve:${loan.$id}` ? (
+                              <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
+                            ) : (
+                              <CheckIcon className="h-5 w-5" />
+                            )}
                           </button>
                           <button
                             onClick={() => rejectLoan(loan.$id)}
+                            disabled={loadingAction === `reject:${loan.$id}`}
                             className="text-red-600 hover:text-red-900"
                             title="Reject"
                           >
-                            <XMarkIcon className="h-5 w-5" />
+                            {loadingAction === `reject:${loan.$id}` ? (
+                              <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                            ) : (
+                              <XMarkIcon className="h-5 w-5" />
+                            )}
                           </button>
                         </div>
                       </td>
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Guarantor Coverage Loans */}
+      {pendingGuarantorLoans.length > 0 && (
+        <div className="card mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Waiting for Guarantor Approvals</h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Member
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Guarantor Gap
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Approved Coverage
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {pendingGuarantorLoans.map((loan) => (
+                  <tr key={loan.$id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {getMemberName(loan.memberId)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                      {formatCurrency(loan.amount)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                      {formatCurrency(loan.guarantorGapAmount || 0)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                      {formatCurrency(loan.guarantorApprovedAmount || 0)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">
+                        {loan.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -1024,6 +1349,9 @@ const LoansManagement = () => {
               <div className="text-sm text-gray-600">
                 Current Balance: {formatCurrency(selectedLoan.balance || selectedLoan.amount)}
               </div>
+              <div className="text-sm text-gray-600">
+                Interest Basis: {getLoanInterestBasisLabel(selectedLoan)}
+              </div>
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">Payment Date</label>
@@ -1132,13 +1460,17 @@ const LoansManagement = () => {
             </div>
 
             <div className="mb-6">
-              {getMemberMonthlyDuePayments(selectedMember.$id, memberPaymentMonth).length === 0 ? (
+              <div className="mb-3 text-sm text-gray-700">
+                Total Due For Month {memberPaymentMonth}:{' '}
+                <span className="font-semibold text-blue-700">{formatCurrency(selectedMemberMonthDueTotal)}</span>
+              </div>
+              {selectedMemberMonthDuePayments.length === 0 ? (
                 <div className="text-sm text-gray-500">
                   No scheduled payments found for this month.
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {getMemberMonthlyDuePayments(selectedMember.$id, memberPaymentMonth).map(item => {
+                  {selectedMemberMonthDuePayments.map(item => {
                     const loanId = item.loan.$id;
                     const selection = memberPaymentsSelection[loanId] || {};
                     const earlyAmount = getEarlyPayoffAmount(item.loan, memberPaymentMonth);
@@ -1153,6 +1485,9 @@ const LoansManagement = () => {
                             </div>
                             <div className="text-xs text-gray-500">
                               Scheduled payment: {formatCurrency(item.amount)}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              Interest basis: {getLoanInterestBasisLabel(item.loan)}
                             </div>
                             {selection.earlyPayoff && (
                               <div className="text-xs text-blue-600">

@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { databases, DATABASE_ID, COLLECTIONS, Query } from '../../lib/appwrite';
+import { databases, functions, DATABASE_ID, COLLECTIONS, Query } from '../../lib/appwrite';
 import { useAuth } from '../../lib/auth';
 import { formatCurrency, calculateAvailableCredit } from '../../utils/financial';
 import { BanknotesIcon, CreditCardIcon, ChartBarIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 import { fetchMemberRecord } from '../../lib/member';
 import { listAllDocuments } from '../../lib/pagination';
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
+
+const GUARANTOR_RESPONSE_FUNCTION_ID =
+  import.meta.env.VITE_APPWRITE_GUARANTOR_RESPONSE_FUNCTION_ID ||
+  import.meta.env.VITE_APPWRITE_LOAN_GUARANTOR_RESPONSE_FUNCTION_ID ||
+  'guarantor-response';
 
 const MemberOverview = () => {
   const { user } = useAuth();
@@ -25,6 +31,124 @@ const MemberOverview = () => {
   const [showSavingsModal, setShowSavingsModal] = useState(false);
   const [showLoansModal, setShowLoansModal] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [guarantorRequests, setGuarantorRequests] = useState([]);
+  const [respondingRequestId, setRespondingRequestId] = useState(null);
+  const [responseComments, setResponseComments] = useState({});
+
+  const normalizeId = (value) => {
+    if (!value) return null;
+    return typeof value === 'object' && value.$id ? value.$id : value;
+  };
+
+  const getGuarantorStatusBadgeClass = (status) => {
+    if (status === 'pending') return 'bg-yellow-100 text-yellow-800';
+    if (status === 'approved') return 'bg-green-100 text-green-800';
+    if (status === 'declined') return 'bg-red-100 text-red-800';
+    if (status === 'released') return 'bg-blue-100 text-blue-800';
+    return 'bg-gray-100 text-gray-800';
+  };
+
+  const handleGuarantorActionClick = async (request, action) => {
+    try {
+      setRespondingRequestId(request.$id);
+      const comment = (responseComments[request.$id] || '').trim();
+      const response = await functions.createExecution(
+        GUARANTOR_RESPONSE_FUNCTION_ID,
+        JSON.stringify({
+          action: 'respondGuarantorRequest',
+          requestId: request.$id,
+          response: action,
+          comment
+        })
+      );
+
+      const result = JSON.parse(response?.responseBody || '{}');
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to update guarantor request.');
+      }
+
+      toast.success(action === 'approve' ? 'Guarantor request approved.' : 'Guarantor request declined.');
+      setResponseComments((prev) => ({
+        ...prev,
+        [request.$id]: ''
+      }));
+      await fetchMemberData();
+    } catch (err) {
+      toast.error(err.message || 'Failed to process guarantor response.');
+    } finally {
+      setRespondingRequestId(null);
+    }
+  };
+
+  const fetchGuarantorRequests = async (memberId) => {
+    if (!COLLECTIONS.LOAN_GUARANTORS) {
+      return [];
+    }
+
+    const requests = await listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_GUARANTORS, [
+      Query.equal('guarantorId', memberId)
+    ]);
+
+    if (requests.length === 0) {
+      return [];
+    }
+
+    const loanIds = [...new Set(requests.map((request) => normalizeId(request.loanId)).filter(Boolean))];
+    const loanResults = await Promise.all(
+      loanIds.map(async (loanId) => {
+        try {
+          const loan = await databases.getDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId);
+          return [loanId, loan];
+        } catch {
+          return [loanId, null];
+        }
+      })
+    );
+    const loanMap = new Map(loanResults);
+
+    const borrowerIds = [
+      ...new Set(
+        requests
+          .map((request) => normalizeId(request.borrowerId) || normalizeId(loanMap.get(normalizeId(request.loanId))?.memberId))
+          .filter(Boolean)
+      )
+    ];
+    const borrowerResults = await Promise.all(
+      borrowerIds.map(async (borrowerId) => {
+        try {
+          const borrower = await databases.getDocument(DATABASE_ID, COLLECTIONS.MEMBERS, borrowerId);
+          return [borrowerId, borrower];
+        } catch {
+          return [borrowerId, null];
+        }
+      })
+    );
+    const borrowerMap = new Map(borrowerResults);
+
+    return requests
+      .map((request) => {
+        const loanId = normalizeId(request.loanId);
+        const loan = loanMap.get(loanId);
+        const borrowerId = normalizeId(request.borrowerId) || normalizeId(loan?.memberId);
+        const borrower = borrowerMap.get(borrowerId);
+        const guaranteedAmount = parseInt(request.guaranteedAmount, 10) || 0;
+        const guaranteedPercent = Number(request.guaranteedPercent) || 0;
+
+        return {
+          ...request,
+          loanId,
+          borrowerId,
+          borrowerName: borrower?.name || 'Unknown member',
+          loanAmount: parseInt(loan?.amount, 10) || 0,
+          loanType: loan?.loanType || 'short_term',
+          selectedMonths: parseInt(loan?.selectedMonths || loan?.duration, 10) || 0,
+          guaranteedAmount,
+          guaranteedPercent,
+          requestedAt: request.requestedAt || request.createdAt || request.$createdAt
+        };
+      })
+      .sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+  };
 
   useEffect(() => {
     if (user) {
@@ -43,7 +167,7 @@ const MemberOverview = () => {
       const memberId = member.$id;
       
       // Fetch member's savings and loans
-      const [savings, loans, repayments, charges, config] = await Promise.all([
+      const [savings, loans, repayments, charges, config, memberGuarantorRequests] = await Promise.all([
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS, [
           Query.equal('memberId', memberId)
         ]),
@@ -52,9 +176,11 @@ const MemberOverview = () => {
         ]),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
-        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG)
+        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG),
+        fetchGuarantorRequests(memberId)
       ]);
       setFinancialConfig(config);
+      setGuarantorRequests(memberGuarantorRequests);
       
       const totalSavings = savings.reduce((sum, saving) => sum + saving.amount, 0);
       const activeLoans = loans.filter(loan => loan.status === 'active' || loan.status === 'approved').length;
@@ -90,8 +216,15 @@ const MemberOverview = () => {
       const recentRejections = loans.filter(loan => loan.rejectedAt && new Date(loan.rejectedAt) >= last7Days);
       const recentCharges = memberCharges.filter(c => c.createdAt && new Date(c.createdAt) >= last7Days);
       const recentPayments = memberRepayments.filter(r => r.paidAt && new Date(r.paidAt) >= last7Days);
+      const pendingGuarantorRequests = memberGuarantorRequests.filter(request => request.status === 'pending');
 
       setNotifications([
+        {
+          id: 'guarantor-requests',
+          type: pendingGuarantorRequests.length > 0 ? 'alert' : 'info',
+          title: 'Guarantor Requests',
+          message: `${pendingGuarantorRequests.length} pending response(s)`
+        },
         {
           id: 'approvals',
           type: 'success',
@@ -352,6 +485,104 @@ const MemberOverview = () => {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt-6 bg-white shadow rounded-2xl border border-slate-100 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-medium text-gray-900">Guarantor Requests</h3>
+          <span className="text-xs font-semibold px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">
+            {guarantorRequests.filter(request => request.status === 'pending').length} pending
+          </span>
+        </div>
+
+        {guarantorRequests.length === 0 ? (
+          <div className="text-sm text-gray-500">
+            No guarantor requests assigned to you yet.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {guarantorRequests.map((request) => (
+              <div
+                key={request.$id}
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-slate-900">
+                      Borrower: {request.borrowerName}
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      Loan: {formatCurrency(request.loanAmount)} | Type: {request.loanType === 'long_term' ? 'Long-Term' : 'Short-Term'} | Term: {request.selectedMonths || '-'} months
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      Your guarantee:{' '}
+                      {request.guaranteeType === 'percent'
+                        ? `${request.guaranteedPercent}% (~${formatCurrency(request.guaranteedAmount)})`
+                        : formatCurrency(request.guaranteedAmount)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Requested:{' '}
+                      {request.requestedAt
+                        ? new Date(request.requestedAt).toLocaleDateString()
+                        : '-'}
+                    </div>
+                    {request.comment ? (
+                      <div className="text-xs text-slate-500">
+                        Comment: {request.comment}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-col items-start md:items-end gap-2">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGuarantorStatusBadgeClass(request.status)}`}>
+                      {request.status}
+                    </span>
+                    {request.status === 'pending' ? (
+                      <div className="w-full md:w-72 space-y-2">
+                        <textarea
+                          value={responseComments[request.$id] || ''}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setResponseComments((prev) => ({
+                              ...prev,
+                              [request.$id]: value
+                            }));
+                          }}
+                          rows={2}
+                          maxLength={500}
+                          placeholder="Optional comment for your response"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleGuarantorActionClick(request, 'approve')}
+                            disabled={respondingRequestId === request.$id}
+                            className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 border border-green-200 rounded-md hover:bg-green-200 disabled:opacity-50"
+                          >
+                            {respondingRequestId === request.$id ? 'Processing...' : 'Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleGuarantorActionClick(request, 'decline')}
+                            disabled={respondingRequestId === request.$id}
+                            className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 border border-red-200 rounded-md hover:bg-red-200 disabled:opacity-50"
+                          >
+                            {respondingRequestId === request.$id ? 'Processing...' : 'Decline'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-500">
+                        This request has already been responded to.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="mt-6 bg-white shadow rounded-2xl border border-slate-100 p-6">

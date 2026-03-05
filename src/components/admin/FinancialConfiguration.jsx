@@ -4,6 +4,16 @@ import { databases, DATABASE_ID, COLLECTIONS } from '../../lib/appwrite';
 import { ID, Query } from 'appwrite';
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 
+const INTEGER_CONFIG_FIELDS = new Set([
+  'loanEligibilityPercentage',
+  'defaultBankCharge',
+  'maxLoanDuration',
+  'longTermMaxRepaymentMonths',
+  'minLoanAmount',
+  'maxLoanAmount'
+]);
+const INTEREST_CALCULATION_MODES = new Set(['flat', 'reducing_balance']);
+
 const FinancialConfiguration = () => {
   const [config, setConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [configId, setConfigId] = useState(null);
@@ -66,20 +76,78 @@ const FinancialConfiguration = () => {
   };
 
   const handleConfigChange = (field, value) => {
+    if (field === 'interestCalculationMode') {
+      const normalized = String(value || '').trim().toLowerCase();
+      setConfig(prev => ({
+        ...prev,
+        interestCalculationMode: INTEREST_CALCULATION_MODES.has(normalized)
+          ? normalized
+          : DEFAULT_FINANCIAL_CONFIG.interestCalculationMode
+      }));
+      return;
+    }
+
+    const parsedValue = Number(value);
+    const safeValue = Number.isFinite(parsedValue) ? parsedValue : 0;
     setConfig(prev => ({
       ...prev,
-      [field]: parseFloat(value) || 0
+      [field]: INTEGER_CONFIG_FIELDS.has(field) ? Math.trunc(safeValue) : safeValue
     }));
   };
 
+  const validateConfiguration = () => {
+    if (config.loanInterestRate <= 0) return 'Short-term interest rate must be greater than 0%.';
+    if (config.longTermInterestRate <= 0) return 'Long-term interest rate must be greater than 0%.';
+    if (!INTEREST_CALCULATION_MODES.has(String(config.interestCalculationMode || '').toLowerCase())) {
+      return 'Interest calculation mode is invalid.';
+    }
+    if (config.loanEligibilityPercentage < 1 || config.loanEligibilityPercentage > 100) {
+      return 'Loan eligibility percentage must be between 1% and 100%.';
+    }
+    if (config.earlyRepaymentPenalty < 0) return 'Early repayment penalty cannot be negative.';
+    if (config.maxLoanDuration < 1 || config.maxLoanDuration > 12) {
+      return 'Short-term maximum repayment must be between 1 and 12 months.';
+    }
+    if (config.longTermMaxRepaymentMonths < 1 || config.longTermMaxRepaymentMonths > 120) {
+      return 'Long-term maximum repayment must be between 1 and 120 months.';
+    }
+    if (config.longTermMaxRepaymentMonths <= config.maxLoanDuration) {
+      return 'Long-term maximum repayment must be greater than short-term maximum repayment.';
+    }
+    if (config.minLoanAmount < 0) return 'Minimum loan amount cannot be negative.';
+    if (config.maxLoanAmount <= 0) return 'Maximum loan amount must be greater than 0.';
+    if (config.minLoanAmount > config.maxLoanAmount) {
+      return 'Minimum loan amount cannot exceed maximum loan amount.';
+    }
+    if (config.defaultBankCharge < 0) return 'Default bank charge cannot be negative.';
+    return null;
+  };
+
   const saveConfiguration = async () => {
+    const validationError = validateConfiguration();
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
     setLoading(true);
     try {
       if (!COLLECTIONS.FINANCIAL_CONFIG) {
         throw new Error('Financial configuration collection is not set.');
       }
       const payload = Object.keys(DEFAULT_FINANCIAL_CONFIG).reduce((acc, key) => {
-        acc[key] = config[key];
+        if (key === 'interestCalculationMode') {
+          const normalized = String(config[key] || '').trim().toLowerCase();
+          acc[key] = INTEREST_CALCULATION_MODES.has(normalized)
+            ? normalized
+            : DEFAULT_FINANCIAL_CONFIG.interestCalculationMode;
+          return acc;
+        }
+        const parsedValue = Number(config[key]);
+        const normalizedValue = Number.isFinite(parsedValue)
+          ? parsedValue
+          : Number(DEFAULT_FINANCIAL_CONFIG[key]);
+        acc[key] = INTEGER_CONFIG_FIELDS.has(key) ? Math.trunc(normalizedValue) : normalizedValue;
         return acc;
       }, {});
       if (configId) {
@@ -98,6 +166,7 @@ const FinancialConfiguration = () => {
         );
         setConfigId(created.$id);
       }
+      setConfig(prev => ({ ...prev, ...payload }));
       toast.success('Configuration saved successfully');
     } catch (error) {
       toast.error('Failed to save configuration');
@@ -215,7 +284,7 @@ const FinancialConfiguration = () => {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Monthly Interest Rate (%)
+                Short-Term Monthly Interest Rate (%)
               </label>
               <input
                 type="number"
@@ -225,6 +294,37 @@ const FinancialConfiguration = () => {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               />
               <p className="text-xs text-gray-500 mt-1">Current: {config.loanInterestRate}% per month</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Long-Term Monthly Interest Rate (%)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={config.longTermInterestRate}
+                onChange={(e) => handleConfigChange('longTermInterestRate', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">Current: {config.longTermInterestRate}% per month</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Interest Calculation Mode
+              </label>
+              <select
+                value={config.interestCalculationMode}
+                onChange={(e) => handleConfigChange('interestCalculationMode', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value="flat">Flat (on original principal)</option>
+                <option value="reducing_balance">Reducing Balance (on outstanding principal)</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Current: {config.interestCalculationMode === 'reducing_balance' ? 'Reducing Balance' : 'Flat'}
+              </p>
             </div>
 
             <div>
@@ -263,7 +363,7 @@ const FinancialConfiguration = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Maximum Loan Duration (months)
+                Short-Term Maximum Repayment (months)
               </label>
               <input
                 type="number"
@@ -274,7 +374,24 @@ const FinancialConfiguration = () => {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Maximum loan term: {config.maxLoanDuration} months
+                Maximum short-term loan term: {config.maxLoanDuration} months
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Long-Term Maximum Repayment (months)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="120"
+                value={config.longTermMaxRepaymentMonths}
+                onChange={(e) => handleConfigChange('longTermMaxRepaymentMonths', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Maximum long-term loan term: {config.longTermMaxRepaymentMonths} months
               </p>
             </div>
           </div>
@@ -338,12 +455,15 @@ const FinancialConfiguration = () => {
         <h3 className="text-lg font-medium text-blue-900 mb-4">Current Configuration Summary</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div>
-            <p><strong>Monthly Interest:</strong> {config.loanInterestRate}%</p>
+            <p><strong>Short-Term Interest:</strong> {config.loanInterestRate}%</p>
+            <p><strong>Long-Term Interest:</strong> {config.longTermInterestRate}%</p>
+            <p><strong>Interest Mode:</strong> {config.interestCalculationMode === 'reducing_balance' ? 'Reducing Balance' : 'Flat'}</p>
             <p><strong>Loan Eligibility:</strong> {config.loanEligibilityPercentage}% of savings</p>
             <p><strong>Early Repayment Penalty:</strong> {config.earlyRepaymentPenalty}%</p>
           </div>
           <div>
-            <p><strong>Max Duration:</strong> {config.maxLoanDuration} months</p>
+            <p><strong>Short-Term Max Duration:</strong> {config.maxLoanDuration} months</p>
+            <p><strong>Long-Term Max Duration:</strong> {config.longTermMaxRepaymentMonths} months</p>
             <p><strong>Loan Range:</strong> UGX {config.minLoanAmount.toLocaleString()} - {config.maxLoanAmount.toLocaleString()}</p>
             <p><strong>Default Bank Charge:</strong> UGX {config.defaultBankCharge.toLocaleString()}</p>
           </div>
@@ -354,7 +474,9 @@ const FinancialConfiguration = () => {
         <h3 className="text-lg font-medium text-yellow-900 mb-2">SACCO Business Rules</h3>
         <ul className="text-sm text-yellow-800 space-y-1">
           <li>- Loan eligibility is calculated as: (Total Savings x {config.loanEligibilityPercentage}%) - Outstanding Loans</li>
-          <li>- Monthly interest is calculated on the principal amount</li>
+          <li>- Short-term loans use {config.loanInterestRate}% monthly interest up to {config.maxLoanDuration} months</li>
+          <li>- Long-term loans use {config.longTermInterestRate}% monthly interest up to {config.longTermMaxRepaymentMonths} months</li>
+          <li>- Interest mode is currently {config.interestCalculationMode === 'reducing_balance' ? 'Reducing Balance' : 'Flat'} for all loans</li>
           <li>- Early repayments incur an additional {config.earlyRepaymentPenalty}% penalty for that month</li>
           <li>- Bank charges are added to approved loans and appear in the first repayment</li>
           <li>- All financial calculations are performed server-side for security</li>

@@ -1,22 +1,28 @@
-import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import toast from 'react-hot-toast';
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const { register, handleSubmit, formState: { errors } } = useForm();
+  const { loginWithGoogle, authError, clearAuthError } = useAuth();
+  const requireMemberProfile = import.meta.env.VITE_REQUIRE_MEMBER_PROFILE === 'true';
 
-  const onSubmit = async (data) => {
+  useEffect(() => {
+    if (authError) {
+      toast.error(authError);
+      clearAuthError();
+    }
+  }, [authError, clearAuthError]);
+
+  const onGoogleSignIn = async () => {
     setLoading(true);
     try {
-      await login(data.email, data.password);
-      toast.success('Login successful!');
+      await loginWithGoogle();
     } catch (error) {
-      toast.error(error.message || 'Login failed');
-    } finally {
+      toast.error(error.message || 'Google sign-in failed');
       setLoading(false);
+    } finally {
+      // OAuth redirects away on success.
     }
   };
 
@@ -26,73 +32,43 @@ const Login = () => {
         <div className="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100">
           <div className="text-center mb-8">
             <div className="mx-auto h-16 w-16 rounded-2xl flex items-center justify-center mb-4 bg-[#0B1220]">
-              <img src="../public/logo.png" alt="club-logo" className="h-12 w-12 object-contain" />
+              <img src="../logo.png" alt="club-logo" className="h-12 w-12 object-contain" />
             </div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">
               Crownzcom Investemt Club
             </h2>
             <p className="text-gray-600">
-              Sign in to your account
+              Sign in with Google
             </p>
           </div>
-          
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Email Address
-              </label>
-              <input
-                {...register('email', { 
-                  required: 'Email is required',
-                  pattern: {
-                    value: /^\S+@\S+$/i,
-                    message: 'Invalid email address'
-                  }
-                })}
-                type="email"
-                className="form-input"
-                placeholder="Enter your email"
-              />
-              {errors.email && (
-                <p className="mt-2 text-sm text-red-600">{errors.email.message}</p>
-              )}
-            </div>
-            
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Password
-              </label>
-              <input
-                {...register('password', { required: 'Password is required' })}
-                type="password"
-                className="form-input"
-                placeholder="Enter your password"
-              />
-              {errors.password && (
-                <p className="mt-2 text-sm text-red-600">{errors.password.message}</p>
-              )}
-            </div>
 
+          <div className="space-y-4">
             <button
-              type="submit"
+              type="button"
+              onClick={onGoogleSignIn}
               disabled={loading}
-              className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  <div className="mr-2 h-5 w-5 animate-spin rounded-full border-b-2 border-gray-700"></div>
                   Signing in...
                 </div>
               ) : (
-                'Sign In'
+                <>
+                  <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.6 3.8-5.4 3.8-3.2 0-5.8-2.7-5.8-6s2.6-6 5.8-6c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.7 3.5 14.6 2.6 12 2.6c-5.2 0-9.4 4.2-9.4 9.4s4.2 9.4 9.4 9.4c5.4 0 9-3.8 9-9.2 0-.6-.1-1.1-.1-1.6H12z" />
+                  </svg>
+                  Sign in with Google
+                </>
               )}
             </button>
-          </form>
-          
-          <div className="mt-6 text-center">
-            {/* <p className="text-xs text-gray-500">
-              Secure login powered by Appwrite
-            </p> */}
+
+            <p className="text-center text-xs text-gray-500">
+              {requireMemberProfile
+                ? 'Only accounts linked to SACCO member profiles can access the system.'
+                : 'Only valid Appwrite Auth accounts can access the system.'}
+            </p>
           </div>
         </div>
       </div>

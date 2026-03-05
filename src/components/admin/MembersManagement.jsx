@@ -7,6 +7,11 @@ import { PlusIcon, PencilIcon, TrashIcon, EyeIcon } from '@heroicons/react/24/ou
 import toast from 'react-hot-toast';
 import { Query } from 'appwrite';
 
+const CREATE_MEMBER_FUNCTION_ID =
+  import.meta.env.VITE_APPWRITE_CREATE_MEMBER_FUNCTION_ID ||
+  import.meta.env.VITE_APPWRITE_FUNCTION_ID ||
+  'create-member';
+
 const MembersManagement = () => {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -57,46 +62,36 @@ const MembersManagement = () => {
       });
       toast.success('Member updated successfully');
     } else {
-      // Create new member using Appwrite Function
-      try {
-        const response = await functions.createExecution(
-          import.meta.env.VITE_APPWRITE_FUNCTION_ID,
-          JSON.stringify({
-            name: data.name,
-            email: data.email,
-            password: data.password,
-            phone: data.phone,
-            membershipNumber: data.membershipNumber,
-            joinDate: data.joinDate || new Date().toISOString().split('T')[0]
-          })
-        );
-        
-        const result = JSON.parse(response.responseBody);
-        console.log('Function result:', result); // DEBUG: Check what's returned
-        
-        if (result.success) {
-          toast.success('Member and auth account created successfully');
-          
-          // Add a small delay to ensure database is updated
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } else {
-          throw new Error(result.error || 'Function execution failed');
-        }
-      } catch (functionError) {
-        console.warn('Function failed, creating database record only:', functionError);
-        
-        const memberData = {
+      // Create new member using Appwrite Function (Auth + DB)
+      if (!CREATE_MEMBER_FUNCTION_ID) {
+        throw new Error('Create-member function ID is not configured.');
+      }
+
+      const response = await functions.createExecution(
+        CREATE_MEMBER_FUNCTION_ID,
+        JSON.stringify({
           name: data.name,
           email: data.email,
+          password: data.password,
           phone: data.phone,
           membershipNumber: data.membershipNumber,
-          joinDate: data.joinDate || new Date().toISOString().split('T')[0],
-          status: 'active'
-        };
-        
-        await databases.createDocument(DATABASE_ID, COLLECTIONS.MEMBERS, ID.unique(), memberData);
-        toast.success('Member added to database (function failed)');
+          joinDate: data.joinDate || new Date().toISOString().split('T')[0]
+        })
+      );
+
+      if (!response?.responseBody) {
+        throw new Error('Create-member function returned an empty response.');
       }
+
+      const result = JSON.parse(response.responseBody);
+      if (!result.success) {
+        throw new Error(result.error || 'Create-member function failed.');
+      }
+
+      toast.success('Member and auth account created successfully');
+
+      // Give Appwrite a brief moment before immediate re-query.
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
     
     reset();
@@ -164,22 +159,17 @@ const MembersManagement = () => {
     if (!confirm('Are you sure you want to delete this member?')) return;
     
     try {
-      try {
-        const response = await functions.createExecution(
-          import.meta.env.VITE_APPWRITE_FUNCTION_ID,
-          JSON.stringify({
-            action: 'delete',
-            memberId: member.$id,
-            authUserId: member.authUserId || null
-          })
-        );
-        const result = JSON.parse(response.responseBody || '{}');
-        if (!result.success) {
-          throw new Error(result.error || 'Deletion function failed');
-        }
-      } catch (functionError) {
-        console.warn('Function failed, deleting member record only:', functionError);
-        await databases.deleteDocument(DATABASE_ID, COLLECTIONS.MEMBERS, member.$id);
+      const response = await functions.createExecution(
+        CREATE_MEMBER_FUNCTION_ID,
+        JSON.stringify({
+          action: 'delete',
+          memberId: member.$id,
+          authUserId: member.authUserId || null
+        })
+      );
+      const result = JSON.parse(response.responseBody || '{}');
+      if (!result.success) {
+        throw new Error(result.error || 'Deletion function failed');
       }
       toast.success('Member deleted successfully');
       fetchMembers();
