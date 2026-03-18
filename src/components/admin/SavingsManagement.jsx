@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { databases, DATABASE_ID, COLLECTIONS } from '../../lib/appwrite';
+import { databases, DATABASE_ID, COLLECTIONS, functions } from '../../lib/appwrite';
 import { formatCurrency } from '../../utils/financial';
 import { PlusIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { ID } from 'appwrite';
@@ -16,12 +16,28 @@ const SavingsManagement = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [savingLoading, setSavingLoading] = useState(false);
   const [savingDeleteId, setSavingDeleteId] = useState('');
+  const [showBatchForm, setShowBatchForm] = useState(false);
+  const [batchDate, setBatchDate] = useState(new Date().toISOString().split('T')[0]);
+  const [batchEntries, setBatchEntries] = useState({});
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const BATCH_SAVINGS_FUNCTION_ID =
+    import.meta.env.VITE_APPWRITE_BATCH_SAVINGS_FUNCTION_ID ||
+    import.meta.env.VITE_APPWRITE_BATCH_ADD_SAVINGS_FUNCTION_ID ||
+    'batch-add-savings';
   
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
 
   useEffect(() => {
     fetchData();
   }, [selectedMonth]);
+
+  useEffect(() => {
+    const initialEntries = members.reduce((acc, member) => {
+      acc[member.$id] = acc[member.$id] ?? '';
+      return acc;
+    }, {});
+    setBatchEntries(initialEntries);
+  }, [members]);
 
   const fetchData = async () => {
     try {
@@ -72,6 +88,77 @@ const SavingsManagement = () => {
       console.error('Error recording savings:', error);
     } finally {
       setSavingLoading(false);
+    }
+  };
+
+  const handleBatchAmountChange = (memberId, value) => {
+    setBatchEntries((prev) => ({
+      ...prev,
+      [memberId]: value
+    }));
+  };
+
+  const resetBatchForm = () => {
+    setBatchEntries(members.reduce((acc, member) => {
+      acc[member.$id] = '';
+      return acc;
+    }, {}));
+    setBatchDate(new Date().toISOString().split('T')[0]);
+    setShowBatchForm(false);
+    setBatchSubmitting(false);
+  };
+
+  const submitBatchSavings = async () => {
+    if (!BATCH_SAVINGS_FUNCTION_ID) {
+      toast.error('Batch savings function ID is not configured.');
+      return;
+    }
+
+    const entries = Object.entries(batchEntries)
+      .map(([memberId, amount]) => ({
+        memberId,
+        amount: amount === '' ? null : amount
+      }))
+      .filter((entry) => entry.amount !== null && entry.amount !== undefined && entry.amount !== '');
+
+    if (!batchDate) {
+      toast.error('Select a contribution date.');
+      return;
+    }
+
+    if (entries.length === 0) {
+      toast.error('Enter at least one member amount.');
+      return;
+    }
+
+    try {
+      setBatchSubmitting(true);
+      const response = await functions.createExecution(
+        BATCH_SAVINGS_FUNCTION_ID,
+        JSON.stringify({
+          date: batchDate,
+          entries
+        })
+      );
+
+      if (!response?.responseBody) {
+        throw new Error('Batch function returned an empty response.');
+      }
+
+      const result = JSON.parse(response.responseBody);
+      if (!result?.success) {
+        throw new Error(result?.error || 'Batch savings failed.');
+      }
+
+      toast.success(
+        `Batch saved: ${result.summary?.created || 0} created, ${result.summary?.skipped || 0} skipped.`
+      );
+      resetBatchForm();
+      fetchData();
+    } catch (err) {
+      toast.error(err.message || 'Failed to submit batch savings.');
+    } finally {
+      setBatchSubmitting(false);
     }
   };
 
@@ -160,6 +247,12 @@ const SavingsManagement = () => {
               className="form-input"
             />
           </div>
+          <button
+            onClick={() => setShowBatchForm(true)}
+            className="btn-secondary flex items-center"
+          >
+            Batch Entry
+          </button>
           <button
             onClick={() => setShowAddForm(true)}
             className="btn-primary flex items-center"
@@ -274,6 +367,96 @@ const SavingsManagement = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {showBatchForm && (
+        <div className="card mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Batch Savings Entry</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Contribution Date
+              </label>
+              <input
+                type="date"
+                value={batchDate}
+                onChange={(e) => setBatchDate(e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Notes
+              </label>
+              <div className="text-sm text-gray-500">
+                Enter amounts per member. Leave blank for members who didn’t contribute.
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-gray-100 rounded-lg">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Member
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Membership #
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount (UGX)
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {members.map((member) => (
+                  <tr key={member.$id}>
+                    <td className="px-4 py-2 text-sm text-gray-900">
+                      {member.name}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-gray-500">
+                      {member.membershipNumber}
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        min="0"
+                        value={batchEntries[member.$id] ?? ''}
+                        onChange={(e) => handleBatchAmountChange(member.$id, e.target.value)}
+                        className="form-input text-right"
+                        placeholder="0"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end space-x-3 mt-4">
+            <button
+              type="button"
+              onClick={resetBatchForm}
+              className="btn-secondary"
+              disabled={batchSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={batchSubmitting}
+              onClick={submitBatchSavings}
+            >
+              {batchSubmitting ? (
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                'Submit Batch'
+              )}
+            </button>
+          </div>
         </div>
       )}
 

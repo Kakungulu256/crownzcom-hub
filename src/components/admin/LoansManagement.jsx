@@ -848,11 +848,11 @@ const LoansManagement = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
-        <div className="card">
-          <div className="text-sm font-medium text-gray-500">Pending Admin</div>
-          <div className="text-2xl font-bold text-yellow-600">{pendingFinalApprovalLoans.length}</div>
-        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6 mb-6">
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Pending Admin</div>
+            <div className="text-2xl font-bold text-yellow-600">{pendingFinalApprovalLoans.length}</div>
+          </div>
         <div className="card">
           <div className="text-sm font-medium text-gray-500">Waiting Guarantors</div>
           <div className="text-2xl font-bold text-amber-600">{pendingGuarantorLoans.length}</div>
@@ -865,20 +865,119 @@ const LoansManagement = () => {
           <div className="text-sm font-medium text-gray-500">Rejected</div>
           <div className="text-2xl font-bold text-red-600">{rejectedLoans.length}</div>
         </div>
-        <div className="card">
-          <div className="text-sm font-medium text-gray-500">Portfolio</div>
-          <div className="text-2xl font-bold text-purple-600">
-            {formatCurrency(
-              activeLoans.reduce((total, loan) => total + loan.amount, 0)
-            )}
+          <div className="card">
+            <div className="text-sm font-medium text-gray-500">Portfolio</div>
+            <div className="text-2xl font-bold text-purple-600 break-words leading-tight">
+              {formatCurrency(
+                activeLoans.reduce((total, loan) => total + loan.amount, 0)
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {pendingEarlyRepaymentRequests.length > 0 && (
-        <div className="card mb-6 border border-amber-200">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
-            <div>
+        {/* Pending Admin Approval Loans */}
+        {pendingFinalApprovalLoans.length > 0 && (
+          <div className="card mb-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Pending Admin Approval</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Member
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Amount
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Eligible
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {pendingFinalApprovalLoans.map((loan) => {
+                    const memberSavings = getMemberSavings(loan.memberId);
+                    const maxLoanAmount = memberSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
+                    const isEligible = loan.amount <= maxLoanAmount;
+                    
+                    return (
+                      <tr key={loan.$id}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {getMemberName(loan.memberId)}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            Savings: {formatCurrency(memberSavings)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                          {formatCurrency(loan.amount)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            isEligible ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {isEligible ? 'Yes' : 'No'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                          <div className="flex justify-center space-x-2">
+                            <button
+                              onClick={() => approveLoan(loan)}
+                              disabled={loadingAction === `approve:${loan.$id}`}
+                              className="text-green-600 hover:text-green-900"
+                              title="Approve"
+                            >
+                              {loadingAction === `approve:${loan.$id}` ? (
+                                <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
+                              ) : (
+                                <CheckIcon className="h-5 w-5" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => rejectLoan(loan.$id)}
+                              disabled={loadingAction === `reject:${loan.$id}`}
+                              className="text-red-600 hover:text-red-900"
+                              title="Reject"
+                            >
+                              {loadingAction === `reject:${loan.$id}` ? (
+                                <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                              ) : (
+                                <XMarkIcon className="h-5 w-5" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => openEditLoanModal(loan)}
+                              className="text-slate-600 hover:text-slate-900"
+                              title="Edit Loan"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteLoan(loan)}
+                              className="text-red-600 hover:text-red-800"
+                              title="Delete Loan"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {pendingEarlyRepaymentRequests.length > 0 && (
+          <div className="card mb-6 border border-amber-200">
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+              <div>
               <h3 className="text-lg font-medium text-gray-900">Early Payoff Requests</h3>
               <p className="text-sm text-gray-600">
                 Members requested to close loans early. Mark as paid to post the payoff.
@@ -1331,105 +1430,6 @@ const LoansManagement = () => {
           </div>
         )}
       </div>
-
-      {/* Pending Admin Approval Loans */}
-      {pendingFinalApprovalLoans.length > 0 && (
-        <div className="card mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Pending Admin Approval</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Member
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Eligible
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {pendingFinalApprovalLoans.map((loan) => {
-                  const memberSavings = getMemberSavings(loan.memberId);
-                  const maxLoanAmount = memberSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
-                  const isEligible = loan.amount <= maxLoanAmount;
-                  
-                  return (
-                    <tr key={loan.$id}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {getMemberName(loan.memberId)}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          Savings: {formatCurrency(memberSavings)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                        {formatCurrency(loan.amount)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          isEligible ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {isEligible ? 'Yes' : 'No'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                        <div className="flex justify-center space-x-2">
-                          <button
-                            onClick={() => approveLoan(loan)}
-                            disabled={loadingAction === `approve:${loan.$id}`}
-                            className="text-green-600 hover:text-green-900"
-                            title="Approve"
-                          >
-                            {loadingAction === `approve:${loan.$id}` ? (
-                              <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
-                            ) : (
-                              <CheckIcon className="h-5 w-5" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => rejectLoan(loan.$id)}
-                            disabled={loadingAction === `reject:${loan.$id}`}
-                            className="text-red-600 hover:text-red-900"
-                            title="Reject"
-                          >
-                            {loadingAction === `reject:${loan.$id}` ? (
-                              <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                            ) : (
-                              <XMarkIcon className="h-5 w-5" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => openEditLoanModal(loan)}
-                            className="text-slate-600 hover:text-slate-900"
-                            title="Edit Loan"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => deleteLoan(loan)}
-                            className="text-red-600 hover:text-red-800"
-                            title="Delete Loan"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Pending Guarantor Coverage Loans */}
       {pendingGuarantorLoans.length > 0 && (

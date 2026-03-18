@@ -9,18 +9,11 @@ const MemberProfile = () => {
   const [memberData, setMemberData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-  const [showPasswordForm, setShowPasswordForm] = useState(false);
-  
   const [profileForm, setProfileForm] = useState({
     name: '',
     phone: '',
-    email: ''
-  });
-
-  const [passwordForm, setPasswordForm] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: ''
+    email: '',
+    currentPassword: ''
   });
 
   useEffect(() => {
@@ -37,7 +30,8 @@ const MemberProfile = () => {
         setProfileForm({
           name: member.name || '',
           phone: member.phone || '',
-          email: member.email || user.email || ''
+          email: member.email || user.email || '',
+          currentPassword: ''
         });
       }
     } catch (error) {
@@ -52,6 +46,19 @@ const MemberProfile = () => {
     setUpdating(true);
 
     try {
+      const nextEmail = profileForm.email?.trim();
+      const emailChanged = nextEmail && nextEmail !== user.email;
+
+      if (emailChanged && !profileForm.currentPassword) {
+        toast.error('Enter your current password to change email.');
+        return;
+      }
+
+      // Update email in Appwrite Auth first (if changed)
+      if (emailChanged) {
+        await account.updateEmail(nextEmail, profileForm.currentPassword);
+      }
+
       // Update member document
       if (memberData) {
         await databases.updateDocument(
@@ -61,14 +68,9 @@ const MemberProfile = () => {
           {
             name: profileForm.name,
             phone: profileForm.phone,
-            email: profileForm.email
+            email: nextEmail || profileForm.email
           }
         );
-      }
-
-      // Update email in Appwrite Auth if changed
-      if (profileForm.email !== user.email) {
-        await account.updateEmail(profileForm.email, passwordForm.currentPassword);
       }
 
       toast.success('Profile updated successfully');
@@ -77,33 +79,6 @@ const MemberProfile = () => {
       toast.error('Failed to update profile');
     } finally {
       setUpdating(false);
-    }
-  };
-
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
-
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      toast.error('New passwords do not match');
-      return;
-    }
-
-    if (passwordForm.newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters long');
-      return;
-    }
-
-    try {
-      await account.updatePassword(passwordForm.newPassword, passwordForm.currentPassword);
-      toast.success('Password updated successfully');
-      setPasswordForm({
-        currentPassword: '',
-        newPassword: '',
-        confirmPassword: ''
-      });
-      setShowPasswordForm(false);
-    } catch (error) {
-      toast.error('Failed to update password. Please check your current password.');
     }
   };
 
@@ -178,6 +153,18 @@ const MemberProfile = () => {
               required
             />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Current Password (required to change email)
+            </label>
+            <input
+              type="password"
+              value={profileForm.currentPassword}
+              onChange={(e) => setProfileForm({...profileForm, currentPassword: e.target.value})}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              placeholder="Enter current password"
+            />
+          </div>
           <div className="flex justify-end">
             <button
               type="submit"
@@ -228,75 +215,7 @@ const MemberProfile = () => {
       </div>
 
       {/* Security Settings */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium text-gray-900">Security Settings</h3>
-          <button
-            onClick={() => setShowPasswordForm(!showPasswordForm)}
-            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
-          >
-            Change Password
-          </button>
-        </div>
-
-        {showPasswordForm && (
-          <form onSubmit={handlePasswordChange} className="space-y-4 border-t pt-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Current Password
-              </label>
-              <input
-                type="password"
-                value={passwordForm.currentPassword}
-                onChange={(e) => setPasswordForm({...passwordForm, currentPassword: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                New Password
-              </label>
-              <input
-                type="password"
-                value={passwordForm.newPassword}
-                onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                minLength="8"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Confirm New Password
-              </label>
-              <input
-                type="password"
-                value={passwordForm.confirmPassword}
-                onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                minLength="8"
-                required
-              />
-            </div>
-            <div className="flex space-x-3">
-              <button
-                type="submit"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-              >
-                Update Password
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowPasswordForm(false)}
-                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+      {/* Password changes are currently disabled in the member profile. */}
 
       {/* Security Tips */}
       <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">

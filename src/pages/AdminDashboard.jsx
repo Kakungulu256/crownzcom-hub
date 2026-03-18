@@ -1,5 +1,5 @@
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { 
   HomeIcon, 
@@ -10,8 +10,11 @@ import {
   Cog6ToothIcon,
   ReceiptPercentIcon,
   CreditCardIcon as SubscriptionIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  BellIcon
 } from '@heroicons/react/24/outline';
+import { databases, DATABASE_ID, COLLECTIONS } from '../lib/appwrite';
+import { listAllDocuments } from '../lib/pagination';
 import MembersManagement from '../components/admin/MembersManagement';
 import SavingsManagement from '../components/admin/SavingsManagement';
 import LoansManagement from '../components/admin/LoansManagement';
@@ -23,9 +26,10 @@ import FinancialConfiguration from '../components/admin/FinancialConfiguration';
 import AdminOverview from '../components/admin/AdminOverview';
 
 const AdminDashboard = () => {
-  const { logout, user } = useAuth();
+  const { logout, user, isMember } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
 
   const pageTitle = () => {
     if (location.pathname.startsWith('/admin/members')) return 'Members';
@@ -58,6 +62,22 @@ const AdminDashboard = () => {
       console.error('Logout error:', error);
     }
   };
+
+  const fetchPendingApprovals = async () => {
+    try {
+      const loans = await listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOANS);
+      const pendingCount = loans.filter((loan) =>
+        loan?.status === 'pending' || loan?.status === 'pending_admin_approval'
+      ).length;
+      setPendingApprovalCount(pendingCount);
+    } catch (error) {
+      console.error('Failed to fetch pending approvals', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingApprovals();
+  }, []);
 
   return (
     <div className="app-shell">
@@ -135,11 +155,33 @@ const AdminDashboard = () => {
                 <div className="app-subtitle">Admin / {pageTitle()}</div>
                 <div className="app-title">{pageTitle()}</div>
               </div>
-              {location.pathname !== '/admin' && (
-                <Link to="/admin" className="text-sm font-semibold text-blue-600 hover:text-blue-800">
-                  Back to Overview
+              <div className="flex items-center gap-3">
+                <Link
+                  to="/admin/loans"
+                  className="relative flex items-center justify-center h-10 w-10 rounded-full border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:border-slate-300"
+                  title="Pending approvals"
+                >
+                  <BellIcon className="h-5 w-5" />
+                  {pendingApprovalCount > 0 && (
+                    <span className="absolute -top-1 -right-1 h-5 min-w-[1.25rem] px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center">
+                      {pendingApprovalCount}
+                    </span>
+                  )}
                 </Link>
-              )}
+                {isMember && (
+                  <Link
+                    to="/member"
+                    className="text-sm font-semibold text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-full px-3 py-1"
+                  >
+                    Switch to Member
+                  </Link>
+                )}
+                {location.pathname !== '/admin' && (
+                  <Link to="/admin" className="text-sm font-semibold text-blue-600 hover:text-blue-800">
+                    Back to Overview
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
           <main className="p-8">

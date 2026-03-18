@@ -120,22 +120,22 @@ Use this checklist to implement one task at a time, in strict order.
 
 Use this checklist to implement one task at a time, in strict order.
 
-- [ ] 1. Confirm notification rules:
-  - Overdue loan definition (schedule date + grace period).
-  - Missing savings rule (monthly requirement, how late payments count).
-- [ ] 2. Update role model to allow dual roles (admin + member):
+- [x] 1. Confirm notification rules:
+  - Overdue loan definition: 7-day grace period after scheduled installment date.
+  - Missing savings rule: monthly required; paying next month still counts as missing for the original month.
+- [x] 2. Update role model to allow dual roles (admin + member):
   - Choose source of truth (Appwrite labels vs `members.roles` array).
   - Ensure both roles can be held simultaneously.
-- [ ] 3. Add role switcher UI so dual-role users can switch portals.
-- [ ] 4. Update auth gating to respect multi-role access (admin and member).
-- [ ] 5. Add Admin "Batch Savings" entry UI:
+- [x] 3. Add role switcher UI so dual-role users can switch portals.
+- [x] 4. Update auth gating to respect multi-role access (admin and member).
+- [x] 5. Add Admin "Batch Savings" entry UI:
   - Single date selector.
   - Member list with per-member amount inputs.
-- [ ] 6. Add Appwrite Function `batchAddSavings` with admin-only validation.
-- [ ] 7. Wire Admin batch savings UI to the function and handle errors/success.
-- [ ] 8. Move "Pending Admin Approval" section to top of Admin Loans page.
-- [ ] 9. Fix Admin Loans portfolio figure truncation (wrap/shrink/responsive).
-- [ ] 10. Add notification bell in admin header (pending approvals count).
+- [x] 6. Add Appwrite Function `batchAddSavings` with admin-only validation.
+- [x] 7. Wire Admin batch savings UI to the function and handle errors/success.
+- [x] 8. Move "Pending Admin Approval" section to top of Admin Loans page.
+- [x] 9. Fix Admin Loans portfolio figure truncation (wrap/shrink/responsive).
+- [x] 10. Add notification bell in admin header (pending approvals count).
 - [ ] 11. Add notification bell in member header (overdue loans + missing savings).
-- [ ] 12. Member Profile: enable email change (Auth + members collection sync).
-- [ ] 13. Member Profile: comment out/disable "Change Password" section under Security Settings.
+- [x] 12. Member Profile: enable email change (Auth + members collection sync).
+- [x] 13. Member Profile: comment out/disable "Change Password" section under Security Settings.

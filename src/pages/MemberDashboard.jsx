@@ -18,7 +18,7 @@ import MemberSubscriptions from '../components/member/MemberSubscriptions';
 import MemberProfile from '../components/member/MemberProfile';
 
 const MemberDashboard = () => {
-  const { logout, user } = useAuth();
+  const { logout, user, isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -47,6 +47,7 @@ const MemberDashboard = () => {
       console.error('Logout error:', error);
     }
   };
+
 
   return (
     <div className="app-shell">
@@ -132,11 +133,21 @@ const MemberDashboard = () => {
                 <div className="app-subtitle">Member / {pageTitle()}</div>
                 <div className="app-title">{pageTitle()}</div>
               </div>
-              {location.pathname !== '/member' && (
-                <Link to="/member" className="text-sm font-semibold text-emerald-600 hover:text-emerald-800">
-                  Back to Overview
-                </Link>
-              )}
+              <div className="flex items-center gap-3">
+                {isAdmin && (
+                  <Link
+                    to="/admin"
+                    className="text-sm font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-3 py-1"
+                  >
+                    Switch to Admin
+                  </Link>
+                )}
+                {location.pathname !== '/member' && (
+                  <Link to="/member" className="text-sm font-semibold text-emerald-600 hover:text-emerald-800">
+                    Back to Overview
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
           <main className="p-8">

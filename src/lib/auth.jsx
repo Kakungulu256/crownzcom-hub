@@ -14,6 +14,7 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState('');
   const requireMemberProfile = import.meta.env.VITE_REQUIRE_MEMBER_PROFILE === 'true';
@@ -25,31 +26,36 @@ export const AuthProvider = ({ children }) => {
   const checkAuth = async () => {
     try {
       const accountUser = await account.get();
-      if (!requireMemberProfile || !COLLECTIONS.MEMBERS) {
-        setUser(accountUser);
-        setAuthError('');
-        return;
-      }
+      const member = COLLECTIONS.MEMBERS
+        ? await fetchMemberRecord({
+            databases,
+            DATABASE_ID,
+            COLLECTIONS,
+            user: accountUser
+          })
+        : null;
 
-      const member = await fetchMemberRecord({
-        databases,
-        DATABASE_ID,
-        COLLECTIONS,
-        user: accountUser
-      });
+      const roleSet = new Set();
+      const userLabels = Array.isArray(accountUser.labels) ? accountUser.labels : [];
+      if (userLabels.includes('admin')) roleSet.add('admin');
+      if (userLabels.includes('member')) roleSet.add('member');
+      if (member) roleSet.add('member');
 
-      const isAdminUser = Array.isArray(accountUser.labels) && accountUser.labels.includes('admin');
-      if (!member && !isAdminUser) {
+      const isAdminUser = roleSet.has('admin');
+      if (requireMemberProfile && !member && !isAdminUser) {
         await account.deleteSession('current');
         setUser(null);
+        setRoles([]);
         setAuthError('Access denied. Your account is not linked to a member profile.');
         return;
       }
 
       setUser(accountUser);
+      setRoles([...roleSet]);
       setAuthError('');
     } catch (error) {
       setUser(null);
+      setRoles([]);
     } finally {
       setLoading(false);
     }
@@ -58,10 +64,8 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       await account.createEmailSession(email, password);
-      const user = await account.get();
-      setUser(user);
-      setAuthError('');
-      return user;
+      await checkAuth();
+      return await account.get();
     } catch (error) {
       throw error;
     }
@@ -78,6 +82,7 @@ export const AuthProvider = ({ children }) => {
     try {
       await account.deleteSession('current');
       setUser(null);
+      setRoles([]);
       setAuthError('');
     } catch (error) {
       throw error;
@@ -92,7 +97,9 @@ export const AuthProvider = ({ children }) => {
     loginWithGoogle,
     logout,
     loading,
-    isAdmin: user?.labels?.includes('admin') || false,
+    roles,
+    isAdmin: roles.includes('admin'),
+    isMember: roles.includes('member'),
     authError,
     clearAuthError
   };
