@@ -889,6 +889,7 @@ const MemberLoans = () => {
                 )}
               </div>
 
+              {/*
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Application Date
@@ -903,6 +904,7 @@ const MemberLoans = () => {
                   Use this only for backfilling old applications. Later this will be locked to today.
                 </p>
               </div>
+              */}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -945,6 +947,7 @@ const MemberLoans = () => {
               />
             </div>
 
+            {/*
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-3">
                 Repayment Plan
@@ -972,6 +975,7 @@ const MemberLoans = () => {
                 </label>
               </div>
             </div>
+            */}
 
             {isLongTermSelected && (
               <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
@@ -1111,7 +1115,7 @@ const MemberLoans = () => {
             <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
               <h4 className="text-sm font-semibold text-yellow-900 mb-2">Loan Terms & Conditions</h4>
               <div className="text-sm text-yellow-900 space-y-2 max-h-56 overflow-y-auto pr-2">
-                <p><strong>Acknowledgements:</strong> I confirm all loan details are accurate and authorize the SACCO to process this application.</p>
+                <p><strong>Acknowledgements:</strong> I confirm all loan details are accurate and authorize the club to process this application.</p>
                 <p>
                   <strong>Interest Basis:</strong> {getApplicationInterestBasisLabel()} applies to this application.
                 </p>

@@ -11,7 +11,9 @@ export const DEFAULT_FINANCIAL_CONFIG = {
   maxLoanDuration: 6,
   longTermMaxRepaymentMonths: 24,
   minLoanAmount: 10000,
-  maxLoanAmount: 5000000
+  maxLoanAmount: 5000000,
+  logoFileId: '',
+  logoBucketId: ''
 };
 
 export const fetchFinancialConfig = async (databases, databaseId, collectionId, options = {}) => {

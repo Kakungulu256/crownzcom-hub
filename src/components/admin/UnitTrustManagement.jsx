@@ -44,9 +44,12 @@ const UnitTrustManagement = () => {
     e.preventDefault();
     try {
       setUnitTrustLoading(true);
+      const parsedAmount = parseFloat(formData.amount);
+      const safeAmount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
       const payload = {
         ...formData,
-        amount: parseInt(formData.amount),
+        amount: Math.round(safeAmount),
+        amountFloat: safeAmount,
         date: new Date(formData.date).toISOString(),
         createdAt: new Date().toISOString()
       };
@@ -58,7 +61,10 @@ const UnitTrustManagement = () => {
           payload
         );
         const month = payload.date.slice(0, 7);
-        const delta = payload.amount - (editingRecord.amount || 0);
+        const previousAmount = typeof editingRecord.amountFloat === 'number'
+          ? editingRecord.amountFloat
+          : (editingRecord.amount || 0);
+        const delta = safeAmount - previousAmount;
         if (delta !== 0) {
           await createLedgerEntry({
             databases,
@@ -66,7 +72,7 @@ const UnitTrustManagement = () => {
             COLLECTIONS,
             entry: {
               type: 'UnitTrust',
-              amount: delta,
+              amount: Math.round(delta),
               month,
               year: parseInt(month.split('-')[0], 10),
               notes: `Adjustment (edit) - ${payload.type}${payload.description ? ` - ${payload.description}` : ''}`
@@ -88,7 +94,7 @@ const UnitTrustManagement = () => {
           COLLECTIONS,
           entry: {
             type: 'UnitTrust',
-            amount: payload.amount,
+            amount: Math.round(safeAmount),
             month,
             year: parseInt(month.split('-')[0], 10),
             notes: `${payload.type}${payload.description ? ` - ${payload.description}` : ''}`
@@ -116,7 +122,7 @@ const UnitTrustManagement = () => {
     setEditingRecord(record);
     setFormData({
       type: record.type,
-      amount: String(record.amount || ''),
+      amount: String((typeof record.amountFloat === 'number' ? record.amountFloat : record.amount) || ''),
       description: record.description || '',
       date: record.date ? new Date(record.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
     });
@@ -134,7 +140,7 @@ const UnitTrustManagement = () => {
         COLLECTIONS,
         entry: {
           type: 'UnitTrust',
-          amount: -(record.amount || 0),
+          amount: -Math.round((typeof record.amountFloat === 'number' ? record.amountFloat : record.amount) || 0),
           month,
           year: parseInt(month.split('-')[0], 10),
           notes: `Reversal (delete) - ${record.type}${record.description ? ` - ${record.description}` : ''}`
@@ -147,10 +153,16 @@ const UnitTrustManagement = () => {
     }
   };
 
+  const getUnitTrustAmount = (record) => {
+    if (typeof record?.amountFloat === 'number') return record.amountFloat;
+    const parsed = Number(record?.amount);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
   const getTotalByType = (type) => {
     return unitTrustRecords
       .filter(record => record.type === type)
-      .reduce((sum, record) => sum + record.amount, 0);
+      .reduce((sum, record) => sum + getUnitTrustAmount(record), 0);
   };
 
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>;
@@ -297,7 +309,7 @@ const UnitTrustManagement = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                  {formatCurrency(record.amount)}
+                  {formatCurrency(getUnitTrustAmount(record))}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-900">
                   {record.description}

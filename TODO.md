@@ -139,3 +139,7 @@ Use this checklist to implement one task at a time, in strict order.
 - [ ] 11. Add notification bell in member header (overdue loans + missing savings).
 - [x] 12. Member Profile: enable email change (Auth + members collection sync).
 - [x] 13. Member Profile: comment out/disable "Change Password" section under Security Settings.
+
+## Temporary UI Hides (Easy Revert Notes)
+
+- Member loan application form: commented out Application Date field and Repayment Plan selector. See `src/components/member/MemberLoans.jsx`.

@@ -37,7 +37,7 @@ const applyWatermark = (doc, pageWidth, pageHeight, watermark) => {
   }
 };
 
-export const createPdfDoc = ({ title, subtitle, meta = [], watermark = null } = {}) => {
+export const createPdfDoc = ({ title, subtitle, meta = [], watermark = null, showTitleOnNewPages = true } = {}) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -76,7 +76,7 @@ export const createPdfDoc = ({ title, subtitle, meta = [], watermark = null } = 
   return {
     doc,
     cursorY,
-    meta: { title, subtitle, pageWidth, pageHeight, watermark }
+    meta: { title, subtitle, pageWidth, pageHeight, watermark, showTitleOnNewPages }
   };
 };
 
@@ -94,13 +94,13 @@ const addPageIfNeeded = (doc, cursorY, meta, rowsNeeded = 1) => {
     meta?.watermark || null
   );
   let newY = DEFAULT_MARGIN;
-  if (meta?.title) {
+  if (meta?.title && meta?.showTitleOnNewPages !== false) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
     doc.text(meta.title, DEFAULT_MARGIN, newY);
     newY += LINE_HEIGHT;
   }
-  if (meta?.subtitle) {
+  if (meta?.subtitle && meta?.showTitleOnNewPages !== false) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.text(meta.subtitle, DEFAULT_MARGIN, newY);
@@ -232,7 +232,7 @@ export const addSimpleTable = (doc, cursorY, columns, rows, meta) => {
     cursorY = rowTop + rowHeight + 1;
   });
 
-  return Math.max(cursorY, startY + LINE_HEIGHT);
+  return cursorY;
 };
 
 export const savePdf = (doc, filename) => {

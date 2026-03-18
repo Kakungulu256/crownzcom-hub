@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../lib/appwrite';
+import { fetchFinancialConfig } from '../lib/financialConfig';
 import toast from 'react-hot-toast';
 
 const Login = () => {
@@ -7,6 +9,7 @@ const Login = () => {
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [logoUrl, setLogoUrl] = useState('/logo.png');
   const { login, loginWithGoogle, authError, clearAuthError } = useAuth();
   const requireMemberProfile = import.meta.env.VITE_REQUIRE_MEMBER_PROFILE === 'true';
   const enableEmailLogin = import.meta.env.VITE_ENABLE_EMAIL_LOGIN === 'true';
@@ -17,6 +20,26 @@ const Login = () => {
       clearAuthError();
     }
   }, [authError, clearAuthError]);
+
+  useEffect(() => {
+    const loadLogo = async () => {
+      if (!COLLECTIONS.FINANCIAL_CONFIG) return;
+      try {
+        const config = await fetchFinancialConfig(
+          databases,
+          DATABASE_ID,
+          COLLECTIONS.FINANCIAL_CONFIG
+        );
+        if (config.logoFileId) {
+          const bucketId = config.logoBucketId || DOCUMENTS_BUCKET_ID;
+          setLogoUrl(storage.getFilePreview(bucketId, config.logoFileId));
+        }
+      } catch {
+        // keep default logo
+      }
+    };
+    loadLogo();
+  }, []);
 
   const onGoogleSignIn = async () => {
     setLoadingGoogle(true);
@@ -51,15 +74,15 @@ const Login = () => {
       <div className="max-w-md w-full">
         <div className="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100">
           <div className="text-center mb-8">
-            <div className="mx-auto h-16 w-16 rounded-2xl flex items-center justify-center mb-4 bg-[#0B1220]">
-              <img src="../logo.png" alt="club-logo" className="h-12 w-12 object-contain" />
+            <div className="mx-auto h-16 w-16 rounded-2xl flex items-center justify-center mb-4">
+              <img src={logoUrl} alt="club-logo" className="h-12 w-12 object-contain" />
             </div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">
               Crownzcom Investemt Club
             </h2>
-            <p className="text-gray-600">
+            {/* <p className="text-gray-600">
               Sign in with Google
-            </p>
+            </p> */}
           </div>
 
           <div className="space-y-6">

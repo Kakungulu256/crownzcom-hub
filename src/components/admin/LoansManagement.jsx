@@ -429,14 +429,19 @@ const LoansManagement = () => {
       .sort((a, b) => parseInt(a.month) - parseInt(b.month));
   };
 
-  const openEditDatesModal = (loan) => {
-    setSelectedLoan(loan);
-    setEditLoanDate(loan.createdAt ? new Date(loan.createdAt).toISOString().split('T')[0] : '');
+  const initEditRepaymentDates = (loan) => {
+    if (!loan) return;
     const repaymentMap = {};
     getLoanRepayments(loan.$id).forEach((repayment) => {
       repaymentMap[repayment.$id] = repayment.paidAt ? new Date(repayment.paidAt).toISOString().split('T')[0] : '';
     });
     setEditRepaymentDates(repaymentMap);
+  };
+
+  const openEditDatesModal = (loan) => {
+    setSelectedLoan(loan);
+    setEditLoanDate(loan.createdAt ? new Date(loan.createdAt).toISOString().split('T')[0] : '');
+    initEditRepaymentDates(loan);
     setShowEditDatesModal(true);
   };
 
@@ -1554,6 +1559,7 @@ const LoansManagement = () => {
                             setSelectedLoan(loan);
                             setShowRepaymentForm(true);
                             setLoanPaymentsSelection({});
+                            initEditRepaymentDates(loan);
                           }}
                           disabled={loadingAction === `loan-payments:${loan.$id}`}
                           className="text-blue-600 hover:text-blue-900"
@@ -1634,6 +1640,13 @@ const LoansManagement = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                       <div className="flex justify-center space-x-2">
+                        <button
+                          onClick={() => openEditDatesModal(loan)}
+                          className="text-slate-600 hover:text-slate-900"
+                          title="Edit Dates"
+                        >
+                          Edit Dates
+                        </button>
                         <button
                           onClick={() => openEditLoanModal(loan)}
                           className="text-slate-600 hover:text-slate-900"
@@ -1950,30 +1963,78 @@ const LoansManagement = () => {
               ) : (
                 <div className="space-y-3">
                   {getRepaymentSchedule(selectedLoan)
-                    .filter(item => !getLoanRepaymentForMonth(selectedLoan.$id, item.month))
-                    .map(item => (
-                      <div key={item.month} className="border border-gray-200 rounded-md p-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              Month {item.month}
+                    .map(item => {
+                      const alreadyPaid = !!getLoanRepaymentForMonth(selectedLoan.$id, item.month);
+                      return (
+                        <div key={item.month} className="border border-gray-200 rounded-md p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">
+                                Month {item.month}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Payment: {formatCurrency(item.payment + (parseInt(item.month) === 1 ? getLoanChargeTotal(selectedLoan.$id) : 0))}
+                              </div>
+                              {alreadyPaid && (
+                                <div className="text-xs text-green-600 mt-1">Paid</div>
+                              )}
                             </div>
-                            <div className="text-xs text-gray-500">
-                              Payment: {formatCurrency(item.payment + (parseInt(item.month) === 1 ? getLoanChargeTotal(selectedLoan.$id) : 0))}
-                            </div>
+                            <label className="flex items-center text-sm">
+                              <input
+                                type="checkbox"
+                                className="mr-2"
+                                checked={alreadyPaid || !!loanPaymentsSelection[item.month]}
+                                onChange={(e) => toggleLoanPaymentSelection(item.month, e.target.checked)}
+                                disabled={alreadyPaid}
+                              />
+                              Mark as paid
+                            </label>
                           </div>
-                          <label className="flex items-center text-sm">
-                            <input
-                              type="checkbox"
-                              className="mr-2"
-                              checked={!!loanPaymentsSelection[item.month]}
-                              onChange={(e) => toggleLoanPaymentSelection(item.month, e.target.checked)}
-                            />
-                            Mark as paid
-                          </label>
                         </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">Paid So Far (Edit Dates)</h4>
+              {getLoanRepayments(selectedLoan.$id).length === 0 ? (
+                <div className="text-sm text-gray-500">No repayments recorded for this loan.</div>
+              ) : (
+                <div className="space-y-3">
+                  {getLoanRepayments(selectedLoan.$id).map((repayment) => (
+                    <div key={repayment.$id} className="flex items-center justify-between border border-gray-200 rounded-md p-3">
+                      <div className="text-sm text-gray-700">
+                        Month {repayment.month} · {formatCurrency(repayment.amount)}
                       </div>
-                    ))}
+                      <div className="flex items-center space-x-3">
+                        <input
+                          type="date"
+                          value={editRepaymentDates[repayment.$id] || ''}
+                          onChange={(e) =>
+                            setEditRepaymentDates((prev) => ({
+                              ...prev,
+                              [repayment.$id]: e.target.value
+                            }))
+                          }
+                          className="form-input max-w-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveRepaymentDate(repayment.$id)}
+                          disabled={loadingAction === `repayment-date:${repayment.$id}`}
+                          className="btn-secondary"
+                        >
+                          {loadingAction === `repayment-date:${repayment.$id}` ? (
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-600 border-t-transparent" />
+                          ) : (
+                            'Save'
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

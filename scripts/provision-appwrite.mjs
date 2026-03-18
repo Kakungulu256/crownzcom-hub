@@ -26,7 +26,9 @@ const DEFAULT_FINANCIAL_CONFIG = {
   maxLoanDuration: 6,
   longTermMaxRepaymentMonths: 24,
   minLoanAmount: 10000,
-  maxLoanAmount: 5000000
+  maxLoanAmount: 5000000,
+  logoFileId: '',
+  logoBucketId: ''
 };
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -218,6 +220,7 @@ const COLLECTIONS = [
     attributes: [
       { type: 'string', key: 'type', size: 50, required: true },
       { type: 'integer', key: 'amount', required: true },
+      { type: 'float', key: 'amountFloat', required: false },
       { type: 'string', key: 'description', size: 500, required: true },
       { type: 'datetime', key: 'date', required: true },
       { type: 'datetime', key: 'createdAt', required: true }
@@ -248,18 +251,20 @@ const COLLECTIONS = [
     name: 'financial_config',
     envKey: 'VITE_APPWRITE_FINANCIAL_CONFIG_COLLECTION_ID',
     id: collectionIdValue('VITE_APPWRITE_FINANCIAL_CONFIG_COLLECTION_ID', 'FINANCIAL_CONFIG_COLLECTION_ID', 'financial_config'),
-    attributes: [
-      { type: 'float', key: 'loanInterestRate', required: true },
-      { type: 'float', key: 'longTermInterestRate', required: false },
-      { type: 'string', key: 'interestCalculationMode', size: 40, required: false },
-      { type: 'float', key: 'loanEligibilityPercentage', required: true },
-      { type: 'integer', key: 'defaultBankCharge', required: true },
-      { type: 'float', key: 'earlyRepaymentPenalty', required: true },
-      { type: 'integer', key: 'maxLoanDuration', required: true },
-      { type: 'integer', key: 'longTermMaxRepaymentMonths', required: false },
-      { type: 'integer', key: 'minLoanAmount', required: true },
-      { type: 'integer', key: 'maxLoanAmount', required: true }
-    ],
+      attributes: [
+        { type: 'float', key: 'loanInterestRate', required: true },
+        { type: 'float', key: 'longTermInterestRate', required: false },
+        { type: 'string', key: 'interestCalculationMode', size: 40, required: false },
+        { type: 'float', key: 'loanEligibilityPercentage', required: true },
+        { type: 'integer', key: 'defaultBankCharge', required: true },
+        { type: 'float', key: 'earlyRepaymentPenalty', required: true },
+        { type: 'integer', key: 'maxLoanDuration', required: true },
+        { type: 'integer', key: 'longTermMaxRepaymentMonths', required: false },
+        { type: 'integer', key: 'minLoanAmount', required: true },
+        { type: 'integer', key: 'maxLoanAmount', required: true },
+        { type: 'string', key: 'logoFileId', size: 120, required: false },
+        { type: 'string', key: 'logoBucketId', size: 120, required: false }
+      ],
     indexes: []
   },
   {

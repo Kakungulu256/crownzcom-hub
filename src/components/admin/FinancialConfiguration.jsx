@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { databases, DATABASE_ID, COLLECTIONS } from '../../lib/appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../../lib/appwrite';
 import { ID, Query } from 'appwrite';
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 
@@ -18,6 +18,8 @@ const FinancialConfiguration = () => {
   const [config, setConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [configId, setConfigId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
   const [interestRecords, setInterestRecords] = useState([]);
   const [retainedRecords, setRetainedRecords] = useState([]);
   const [interestForm, setInterestForm] = useState({
@@ -47,6 +49,10 @@ const FinancialConfiguration = () => {
         );
         setConfig({ ...DEFAULT_FINANCIAL_CONFIG, ...configDoc });
         setConfigId(configDoc.$id || null);
+        if (configDoc.logoFileId) {
+          const bucketId = configDoc.logoBucketId || DOCUMENTS_BUCKET_ID;
+          setLogoPreviewUrl(storage.getFilePreview(bucketId, configDoc.logoFileId));
+        }
         await Promise.all([loadInterestRecords(), loadRetainedRecords()]);
       } catch (error) {
         toast.error('Failed to load configuration');
@@ -54,6 +60,67 @@ const FinancialConfiguration = () => {
     };
     fetchConfig();
   }, []);
+
+  const handleLogoUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!COLLECTIONS.FINANCIAL_CONFIG) {
+      toast.error('Financial configuration collection is not set.');
+      return;
+    }
+
+    try {
+      setLogoUploading(true);
+      const uploaded = await storage.createFile(DOCUMENTS_BUCKET_ID, ID.unique(), file);
+      const nextLogoFileId = uploaded.$id;
+      const nextLogoBucketId = DOCUMENTS_BUCKET_ID;
+
+      if (config.logoFileId && config.logoBucketId) {
+        try {
+          await storage.deleteFile(config.logoBucketId, config.logoFileId);
+        } catch {
+          // ignore deletion errors
+        }
+      }
+
+      if (configId) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.FINANCIAL_CONFIG,
+          configId,
+          {
+            logoFileId: nextLogoFileId,
+            logoBucketId: nextLogoBucketId
+          }
+        );
+      } else {
+        const created = await databases.createDocument(
+          DATABASE_ID,
+          COLLECTIONS.FINANCIAL_CONFIG,
+          ID.unique(),
+          {
+            ...DEFAULT_FINANCIAL_CONFIG,
+            ...config,
+            logoFileId: nextLogoFileId,
+            logoBucketId: nextLogoBucketId
+          }
+        );
+        setConfigId(created.$id);
+      }
+
+      setConfig((prev) => ({
+        ...prev,
+        logoFileId: nextLogoFileId,
+        logoBucketId: nextLogoBucketId
+      }));
+      setLogoPreviewUrl(storage.getFilePreview(nextLogoBucketId, nextLogoFileId));
+      toast.success('Logo updated');
+    } catch (error) {
+      toast.error(error.message || 'Failed to upload logo');
+    } finally {
+      setLogoUploading(false);
+    }
+  };
 
   const loadInterestRecords = async () => {
     if (!COLLECTIONS.INTEREST_MONTHLY) return;
@@ -132,6 +199,10 @@ const FinancialConfiguration = () => {
 
     setLoading(true);
     try {
+      console.log('[FinancialConfiguration] Saving configuration...', {
+        configId,
+        config
+      });
       if (!COLLECTIONS.FINANCIAL_CONFIG) {
         throw new Error('Financial configuration collection is not set.');
       }
@@ -143,6 +214,14 @@ const FinancialConfiguration = () => {
             : DEFAULT_FINANCIAL_CONFIG.interestCalculationMode;
           return acc;
         }
+        if (key === 'logoFileId' || key === 'logoBucketId') {
+          const rawValue = config[key];
+          const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+          if (normalized.length > 0) {
+            acc[key] = normalized;
+          }
+          return acc;
+        }
         const parsedValue = Number(config[key]);
         const normalizedValue = Number.isFinite(parsedValue)
           ? parsedValue
@@ -150,6 +229,7 @@ const FinancialConfiguration = () => {
         acc[key] = INTEGER_CONFIG_FIELDS.has(key) ? Math.trunc(normalizedValue) : normalizedValue;
         return acc;
       }, {});
+      console.log('[FinancialConfiguration] Save payload', payload);
       if (configId) {
         await databases.updateDocument(
           DATABASE_ID,
@@ -169,6 +249,7 @@ const FinancialConfiguration = () => {
       setConfig(prev => ({ ...prev, ...payload }));
       toast.success('Configuration saved successfully');
     } catch (error) {
+      console.error('[FinancialConfiguration] Save failed', error);
       toast.error('Failed to save configuration');
     } finally {
       setLoading(false);
@@ -466,6 +547,34 @@ const FinancialConfiguration = () => {
             <p><strong>Long-Term Max Duration:</strong> {config.longTermMaxRepaymentMonths} months</p>
             <p><strong>Loan Range:</strong> UGX {config.minLoanAmount.toLocaleString()} - {config.maxLoanAmount.toLocaleString()}</p>
             <p><strong>Default Bank Charge:</strong> UGX {config.defaultBankCharge.toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Branding (Logo)</h3>
+        <div className="flex flex-col md:flex-row md:items-center gap-6">
+          <div className="h-24 w-24 rounded-xl border border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden">
+            {logoPreviewUrl ? (
+              <img src={logoPreviewUrl} alt="Club logo" className="h-full w-full object-contain" />
+            ) : (
+              <span className="text-xs text-gray-500">No logo</span>
+            )}
+          </div>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              Upload a new logo to replace the current one.
+            </p>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleLogoUpload}
+              className="block text-sm text-gray-600"
+              disabled={logoUploading}
+            />
+            {logoUploading && (
+              <div className="text-sm text-blue-600">Uploading...</div>
+            )}
           </div>
         </div>
       </div>

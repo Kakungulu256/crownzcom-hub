@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { databases, DATABASE_ID, COLLECTIONS } from '../../lib/appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../../lib/appwrite';
 import { formatCurrency } from '../../utils/financial';
 import { DocumentArrowDownIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
@@ -76,12 +76,20 @@ const ReportsManagement = () => {
     image.onerror = () => {
       if (!cancelled) setWatermarkLogoData('');
     };
-    image.src = '/logo.png';
+
+    const logoUrl = financialConfig.logoFileId
+      ? storage.getFilePreview(
+          financialConfig.logoBucketId || DOCUMENTS_BUCKET_ID,
+          financialConfig.logoFileId
+        )
+      : '/logo.png';
+
+    image.src = logoUrl;
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [financialConfig.logoFileId, financialConfig.logoBucketId]);
 
   const fetchReportData = async () => {
     try {
@@ -199,7 +207,7 @@ const ReportsManagement = () => {
   const filteredLoanGuarantors = filterByDate(reportData.loanGuarantors, 'createdAt');
   const filteredLoanRepayments = filterByDate(reportData.loanRepayments, 'paidAt');
   const filteredSubscriptions = filterByDate(reportData.subscriptions, 'createdAt');
-  const filteredUnitTrust = filterByDate(reportData.unitTrust, 'createdAt');
+  const filteredUnitTrust = filterByDate(reportData.unitTrust, 'date');
   const filteredExpenses = filterByDate(reportData.expenses, 'createdAt');
   const filteredLoanCharges = filterByDate(reportData.loanCharges, 'createdAt');
   const filteredInterestMonthly = filterByDate(reportData.interestMonthly, 'createdAt');
@@ -278,7 +286,16 @@ const ReportsManagement = () => {
     return Number.isFinite(parsed) ? parsed : fallback;
   };
 
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
   const clampNonNegative = (value) => Math.max(0, toInteger(value, 0));
+
+  const getUnitTrustAmount = (record) => (
+    toNumber(record?.amountFloat ?? record?.amount, 0)
+  );
 
   const normalizeUnitTrustType = (value) => {
     const type = String(value || '').trim().toLowerCase();
@@ -290,7 +307,7 @@ const ReportsManagement = () => {
   const sumUnitTrustByType = (items) => (
     items.reduce((acc, record) => {
       const type = normalizeUnitTrustType(record?.type);
-      const amount = toInteger(record?.amount, 0);
+      const amount = getUnitTrustAmount(record);
       acc[type] += amount;
       return acc;
     }, { purchase: 0, withdrawal: 0, interest: 0 })
@@ -1132,7 +1149,7 @@ const ReportsManagement = () => {
   };
 
   const pdfWatermark = {
-    text: 'CROWNZCOM SACCO',
+    text: '',
     textSize: 42,
     imageData: watermarkLogoData
   };
@@ -1427,7 +1444,7 @@ const ReportsManagement = () => {
 
   const exportAgmSummaryPdf = () => {
     const snapshotDate = getSnapshotDate();
-    const unitTrustBeforeStart = reportData.unitTrust.filter((record) => isBeforeStart(record?.createdAt));
+    const unitTrustBeforeStart = reportData.unitTrust.filter((record) => isBeforeStart(record?.date));
     const unitTrustRangeTotals = sumUnitTrustByType(filteredUnitTrust);
     const unitTrustBeforeTotals = sumUnitTrustByType(unitTrustBeforeStart);
 
@@ -1496,20 +1513,166 @@ const ReportsManagement = () => {
     const totalExpenses = totalExpensesInRange + totalInterestPayoutsInRange;
     const netIncome = totalIncome - totalExpenses;
 
+    const toMonthKey = (value) => {
+      if (!value) return null;
+      if (typeof value === 'string' && /^\d{4}-\d{2}$/.test(value)) {
+        return value;
+      }
+      const dateValue = toDate(value);
+      return dateValue ? dateValue.toISOString().slice(0, 7) : null;
+    };
+
+    const isMonthInRange = (monthKey) => {
+      if (!monthKey) return false;
+      return isWithinRange(`${monthKey}-01T00:00:00`);
+    };
+
+    const addMonthly = (map, key, amount) => {
+      if (!key) return;
+      map[key] = (map[key] || 0) + (amount || 0);
+    };
+
+    const trustInterestByMonth = {};
+    const trustInvestedByMonth = {};
+    reportData.unitTrust.forEach((record) => {
+      const type = String(record.type || '').toLowerCase();
+      const recordDate = record.date || record.createdAt || record.$createdAt;
+      if (!isWithinRange(recordDate)) return;
+      const monthKey = toMonthKey(recordDate);
+      const amountValue = getUnitTrustAmount(record);
+      if (type === 'interest') {
+        addMonthly(trustInterestByMonth, monthKey, amountValue);
+      }
+      if (type === 'purchase') {
+        addMonthly(trustInvestedByMonth, monthKey, amountValue);
+      }
+    });
+
+    const savingsByMonth = {};
+    const savingsSource = hasLedgerData ? getLedgerRows('Savings') : reportData.savings;
+    savingsSource.forEach((saving) => {
+      const monthKey = toMonthKey(saving.month || saving.createdAt || saving.$createdAt);
+      if (!isMonthInRange(monthKey)) return;
+      addMonthly(savingsByMonth, monthKey, saving.amount || 0);
+    });
+
+    const loanInterestByMonth = {};
+    const loanSchedulesById = new Map(
+      reportData.loans.map((loan) => [loan.$id, parseRepaymentPlan(loan)])
+    );
+    reportData.loanRepayments.forEach((repayment) => {
+      const paidAt = repayment.paidAt || repayment.createdAt || repayment.$createdAt;
+      if (!isWithinRange(paidAt)) return;
+      const loanId = repayment.loanId?.$id || repayment.loanId;
+      if (!loanId) return;
+      const schedule = loanSchedulesById.get(loanId);
+      if (!schedule) return;
+      const monthNumber = parseInt(repayment.month, 10);
+      if (!Number.isFinite(monthNumber)) return;
+      const scheduleItem = schedule.find((item) => parseInt(item.month, 10) === monthNumber);
+      if (!scheduleItem) return;
+      const interestAmount = parseInt(scheduleItem.interest, 10) || 0;
+      const monthKey = toMonthKey(paidAt);
+      addMonthly(loanInterestByMonth, monthKey, interestAmount);
+    });
+
+    const loansDisbursedByMonth = {};
+    reportData.loans
+      .filter((loan) => ['active', 'approved', 'completed'].includes(loan.status))
+      .forEach((loan) => {
+        const loanDate = loan.createdAt || loan.$createdAt;
+        if (!isWithinRange(loanDate)) return;
+        addMonthly(loansDisbursedByMonth, toMonthKey(loanDate), loan.amount || 0);
+      });
+
+    const monthlyKeys = Array.from(new Set([
+      ...Object.keys(trustInterestByMonth),
+      ...Object.keys(loanInterestByMonth),
+      ...Object.keys(trustInvestedByMonth),
+      ...Object.keys(loansDisbursedByMonth),
+      ...Object.keys(savingsByMonth)
+    ])).sort();
+
+    const formatMonthLabel = (key) => {
+      if (!key) return '';
+      const dateValue = toDate(`${key}-01T00:00:00`);
+      return dateValue
+        ? dateValue.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+        : key;
+    };
+
+    const monthlyDetailRowsRaw = monthlyKeys.map((key) => ({
+      key,
+      trustInvested: trustInvestedByMonth[key] || 0,
+      trustInterest: trustInterestByMonth[key] || 0,
+      loanInterest: loanInterestByMonth[key] || 0,
+      loansDisbursed: loansDisbursedByMonth[key] || 0,
+      savings: savingsByMonth[key] || 0
+    }));
+
+    const monthlyDetailRowsFiltered = monthlyDetailRowsRaw.filter((row) => (
+      Math.abs(row.trustInvested) > 0 ||
+      Math.abs(row.trustInterest) > 0 ||
+      Math.abs(row.loanInterest) > 0 ||
+      Math.abs(row.loansDisbursed) > 0 ||
+      Math.abs(row.savings) > 0
+    ));
+
+    const monthlyTotals = monthlyDetailRowsFiltered.reduce(
+      (acc, row) => {
+        acc.trustInvested += row.trustInvested || 0;
+        acc.trustInterest += row.trustInterest || 0;
+        acc.loanInterest += row.loanInterest || 0;
+        acc.loansDisbursed += row.loansDisbursed || 0;
+        acc.savings += row.savings || 0;
+        return acc;
+      },
+      {
+        trustInvested: 0,
+        trustInterest: 0,
+        loanInterest: 0,
+        loansDisbursed: 0,
+        savings: 0
+      }
+    );
+
+    const monthlyDetailRows = monthlyDetailRowsFiltered.length
+      ? [
+          ...monthlyDetailRowsFiltered.map((row) => ([
+            formatMonthLabel(row.key),
+            formatCurrency(row.trustInvested),
+            formatCurrency(row.trustInterest),
+            formatCurrency(row.loanInterest),
+            formatCurrency(row.loansDisbursed),
+            formatCurrency(row.savings)
+          ])),
+          [
+            'Total',
+            formatCurrency(monthlyTotals.trustInvested),
+            formatCurrency(monthlyTotals.trustInterest),
+            formatCurrency(monthlyTotals.loanInterest),
+            formatCurrency(monthlyTotals.loansDisbursed),
+            formatCurrency(monthlyTotals.savings)
+          ]
+        ]
+      : [['No monthly activity found in range', '', '', '', '', '']];
+
     const meta = [
       `Generated: ${new Date().toLocaleString()}`,
       `Total Members: ${reportData.members.length}`,
       `Report Range: ${reportRangeLabel()}`
     ];
     const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
-      title: 'AGM Financial Summary',
-      subtitle: 'Crownzcom Investment Club',
+      title: 'Financial Summary for Crownzcom Investment Club',
+      subtitle: '',
       meta,
-      watermark: pdfWatermark
+      watermark: pdfWatermark,
+      showTitleOnNewPages: false
     });
 
     let cursorY = startY;
-    cursorY = addSectionTitle(doc, cursorY, 'Statement of Financial Position (Snapshot)', pdfMeta);
+    const SECTION_GAP = 3;
+    cursorY = addSectionTitle(doc, cursorY, 'Statement of Financial Position', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Assets - Trust Balance (Invested Funds)', value: formatCurrency(closingTrustBalance) },
       { label: 'Assets - Loans Receivable (Outstanding Principal)', value: formatCurrency(loansReceivable) },
@@ -1520,7 +1683,7 @@ const ReportsManagement = () => {
       { label: 'Net Position (Assets - Liabilities)', value: formatCurrency(netPosition) }
     ], pdfMeta);
 
-    cursorY += 4;
+    cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Unit Trust Activity (Rollforward)', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Opening Trust Balance', value: formatCurrency(openingTrustBalance) },
@@ -1530,7 +1693,7 @@ const ReportsManagement = () => {
       { label: 'Closing Trust Balance', value: formatCurrency(closingTrustBalance) }
     ], pdfMeta);
 
-    cursorY += 4;
+    cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Loan Portfolio Summary', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Loans Disbursed', value: formatCurrency(totalLoansDisbursedInRange) },
@@ -1540,8 +1703,26 @@ const ReportsManagement = () => {
       { label: 'Outstanding Loan Balance (Principal)', value: formatCurrency(loansReceivable) }
     ], pdfMeta);
 
-    cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Member Contributions & Club Expenses', pdfMeta);
+    cursorY += SECTION_GAP;
+    cursorY = addSectionTitle(doc, cursorY, 'Monthly Activity Details', pdfMeta);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      [
+        'Month',
+        'Trust Invested',
+        'Trust Interest Earned',
+        'Loan Interest Earned',
+        'Loans Disbursed',
+        'Savings'
+      ],
+      monthlyDetailRows,
+      pdfMeta
+    );
+
+
+    cursorY += SECTION_GAP;
+    cursorY = addSectionTitle(doc, cursorY, 'Member Contributions & Club Expenses', pdfMeta, 6);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Member Savings', value: formatCurrency(totalSavingsInRange) },
       { label: 'Total Subscriptions', value: formatCurrency(totalSubscriptionsInRange) },
@@ -1549,8 +1730,8 @@ const ReportsManagement = () => {
       { label: 'Total Club Expenses', value: formatCurrency(totalExpensesInRange) }
     ], pdfMeta);
 
-    cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Operational Performance)', pdfMeta);
+    cursorY += SECTION_GAP;
+    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Operational Performance)', pdfMeta, 12);
     cursorY = addSimpleTable(
       doc,
       cursorY,
@@ -1568,6 +1749,12 @@ const ReportsManagement = () => {
       ],
       pdfMeta
     );
+
+    cursorY += SECTION_GAP;
+    cursorY = addSectionTitle(doc, cursorY, 'Accruals (Unpaid Earnings)', pdfMeta, 3);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Loan Interest Accrued (Unpaid)', value: formatCurrency(getLoanInterestBreakdown(filteredLoans, filteredLoanRepayments).interestAccrued) }
+    ], pdfMeta);
 
     savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
   };

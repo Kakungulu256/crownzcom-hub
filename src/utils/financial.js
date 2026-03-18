@@ -3,7 +3,8 @@ export const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-UG', {
     style: 'currency',
     currency: 'UGX',
-    minimumFractionDigits: 0
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
   }).format(amount);
 };
 

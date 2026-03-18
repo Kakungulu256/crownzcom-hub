@@ -24,6 +24,7 @@ import ExpensesManagement from '../components/admin/ExpensesManagement';
 import SubscriptionsManagement from '../components/admin/SubscriptionsManagement';
 import FinancialConfiguration from '../components/admin/FinancialConfiguration';
 import AdminOverview from '../components/admin/AdminOverview';
+import DocumentsManagement from '../components/admin/DocumentsManagement';
 
 const AdminDashboard = () => {
   const { logout, user, isMember } = useAuth();
@@ -39,6 +40,7 @@ const AdminDashboard = () => {
     if (location.pathname.startsWith('/admin/unit-trust')) return 'Unit Trust';
     if (location.pathname.startsWith('/admin/expenses')) return 'Expenses';
     if (location.pathname.startsWith('/admin/reports')) return 'Reports';
+    if (location.pathname.startsWith('/admin/documents')) return 'Documents';
     if (location.pathname.startsWith('/admin/settings')) return 'Settings';
     return 'Overview';
   };
@@ -52,6 +54,7 @@ const AdminDashboard = () => {
     { name: 'Unit Trust', href: '/admin/unit-trust', icon: BanknotesIcon },
     { name: 'Expenses', href: '/admin/expenses', icon: ReceiptPercentIcon },
     { name: 'Reports', href: '/admin/reports', icon: DocumentChartBarIcon },
+    { name: 'Documents', href: '/admin/documents', icon: DocumentChartBarIcon },
     { name: 'Settings', href: '/admin/settings', icon: Cog6ToothIcon },
   ];
 
@@ -194,6 +197,7 @@ const AdminDashboard = () => {
               <Route path="/unit-trust" element={<UnitTrustManagement />} />
               <Route path="/expenses" element={<ExpensesManagement />} />
               <Route path="/reports" element={<ReportsManagement />} />
+              <Route path="/documents" element={<DocumentsManagement />} />
               <Route path="/settings" element={<FinancialConfiguration />} />
             </Routes>
           </main>
