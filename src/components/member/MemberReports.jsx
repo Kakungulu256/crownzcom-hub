@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { fetchMemberRecord } from '../../lib/member';
 import { listAllDocuments } from '../../lib/pagination';
 import { createPdfDoc, addSectionTitle, addKeyValueRows, addSimpleTable, savePdf } from '../../lib/pdf';
+import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 
 const MemberReports = () => {
   const { user } = useAuth();
@@ -15,8 +16,11 @@ const MemberReports = () => {
     savings: [],
     loans: [],
     loanCharges: [],
+    loanRepayments: [],
+    subscriptions: [],
     ledger: []
   });
+  const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [reportStartDate, setReportStartDate] = useState('');
@@ -46,7 +50,12 @@ const MemberReports = () => {
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOANS, [
           Query.equal('memberId', memberId)
         ]),
-        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES)
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
+        listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SUBSCRIPTIONS, [
+          Query.equal('memberId', memberId)
+        ]),
+        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG)
       ];
 
       if (COLLECTIONS.LEDGER_ENTRIES) {
@@ -55,17 +64,36 @@ const MemberReports = () => {
         ]));
       }
 
-      const [savings, loans, charges, ledger = []] = await Promise.all(requests);
+      const [savings, loans, repayments, charges, subscriptions, config, ledger = []] = await Promise.all(requests);
       
+      const normalizeLoanId = (value) => {
+        if (!value) return '';
+        if (typeof value === 'string') return value;
+        if (value.$id) return value.$id;
+        if (Array.isArray(value)) {
+          const first = value.find((entry) => entry?.$id);
+          return first ? first.$id : '';
+        }
+        return '';
+      };
+
+      const loanIdSet = new Set(loans.map((loan) => normalizeLoanId(loan.$id || loan)));
+      const memberLoanRepayments = repayments.filter((repayment) =>
+        loanIdSet.has(normalizeLoanId(repayment.loanId))
+      );
+
       setMemberData({
         member,
         savings,
         loans,
-        loanCharges: charges.filter(charge => 
-          loans.some(loan => loan.$id === charge.loanId)
+        loanCharges: charges.filter(charge =>
+          loanIdSet.has(normalizeLoanId(charge.loanId))
         ),
+        loanRepayments: memberLoanRepayments,
+        subscriptions,
         ledger
       });
+      setFinancialConfig(config || { ...DEFAULT_FINANCIAL_CONFIG });
     } catch (error) {
       console.error('Error fetching member data:', error);
       toast.error('Failed to fetch member data');
@@ -79,7 +107,8 @@ const MemberReports = () => {
     const activeLoans = memberData.loans.filter(loan => loan.status === 'active');
     const totalLoanAmount = activeLoans.reduce((total, loan) => total + loan.amount, 0);
     const totalLoanBalance = activeLoans.reduce((total, loan) => total + (loan.balance || loan.amount), 0);
-    const loanEligibility = totalSavings * 0.8;
+    const eligibilityPercent = (Number(financialConfig.loanEligibilityPercentage) || 80) / 100;
+    const loanEligibility = totalSavings * eligibilityPercent;
     const availableCredit = Math.max(0, loanEligibility - totalLoanBalance);
 
     return {
@@ -131,6 +160,8 @@ const MemberReports = () => {
 
   const filteredSavings = filterByDate(memberData.savings, 'createdAt');
   const filteredLoans = filterByDate(memberData.loans, 'createdAt');
+  const filteredLoanRepayments = filterByDate(memberData.loanRepayments, 'paidAt');
+  const filteredSubscriptions = filterByDate(memberData.subscriptions, 'createdAt');
   const filteredLedger = filterByDate(memberData.ledger, 'createdAt');
 
   const reportRangeLabel = () => {
@@ -155,34 +186,6 @@ const MemberReports = () => {
       formatCurrency(saving.amount)
     ]));
 
-    const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
-    const completedLoans = filteredLoans.filter(loan => loan.status === 'completed');
-
-    const activeLoanRows = activeLoans
-      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
-      .map(loan => ([
-        formatCurrency(loan.amount),
-        formatCurrency(loan.balance || loan.amount),
-        loan.createdAt ? new Date(loan.createdAt).toLocaleDateString() : ''
-      ]));
-
-    const completedLoanRows = completedLoans
-      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
-      .map(loan => ([
-        formatCurrency(loan.amount),
-        loan.updatedAt ? new Date(loan.updatedAt).toLocaleDateString() : '',
-        loan.purpose || ''
-      ]));
-
-    const interestRows = filteredLedger
-      .filter(entry => entry.type === 'InterestPayout')
-      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
-      .map(entry => ([
-        entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : '',
-        formatCurrency(entry.amount || 0),
-        entry.notes || ''
-      ]));
-
     const totalSavingsInRange = filteredSavings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
     const totalInterestPaid = filteredLedger
       .filter(entry => entry.type === 'InterestPayout')
@@ -202,7 +205,7 @@ const MemberReports = () => {
     cursorY = addSectionTitle(doc, cursorY, 'Summary', pdfMeta, 4);
     cursorY = addKeyValueRows(doc, cursorY, [
       { label: 'Total Savings (Range)', value: formatCurrency(totalSavingsInRange) },
-      { label: 'Total Interest Paid', value: formatCurrency(totalInterestPaid) },
+      { label: 'Interest Earned (Savings)', value: formatCurrency(totalInterestPaid) },
       { label: 'Active Loans', value: filteredLoans.filter(loan => loan.status === 'active').length }
     ], pdfMeta);
 
@@ -220,40 +223,58 @@ const MemberReports = () => {
     );
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Loans - Active', pdfMeta, 5);
-    cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Active Loans', value: activeLoans.length },
-      { label: 'Active Balance', value: formatCurrency(activeLoans.reduce((sum, loan) => sum + (loan.balance || loan.amount || 0), 0)) }
-    ], pdfMeta);
+    cursorY = addSectionTitle(doc, cursorY, 'Loan Summary', pdfMeta, 5);
     cursorY = addSimpleTable(
       doc,
       cursorY,
-      ['Amount', 'Balance', 'Applied'],
-      activeLoanRows.length ? activeLoanRows : [['No active loans', '', '']],
+      ['Loan', 'Type', 'Amount', 'Date Applied', 'Status', 'Interest Mode', 'Rate (%)', 'Balance'],
+      loanSummaryRows.length
+        ? loanSummaryRows.map((row) => ([
+          row.label,
+          row.loanType,
+          formatCurrency(row.amount),
+          row.appliedDate ? new Date(row.appliedDate).toLocaleDateString() : '',
+          row.status,
+          row.interestMode,
+          `${row.interestRatePercent}%`,
+          formatCurrency(row.balance)
+        ]))
+        : [['No loans', '', '', '', '', '', '', '']],
       pdfMeta
     );
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Loans - Completed', pdfMeta, 5);
-    cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Completed Loans', value: completedLoans.length },
-      { label: 'Total Completed Amount', value: formatCurrency(completedLoans.reduce((sum, loan) => sum + (loan.amount || 0), 0)) }
-    ], pdfMeta);
+    cursorY = addSectionTitle(doc, cursorY, 'Loan Repayment History', pdfMeta, 5);
     cursorY = addSimpleTable(
       doc,
       cursorY,
-      ['Amount', 'Completed', 'Purpose'],
-      completedLoanRows.length ? completedLoanRows : [['No completed loans', '', '']],
+      ['Loan', 'Paid Date', 'Month', 'Amount', 'Interest', 'Early Payment'],
+      repaymentHistoryRows.length
+        ? repaymentHistoryRows.map((row) => ([
+          loanSummaryRows.find((loan) => loan.loanId === row.loanId)?.label || 'Loan',
+          row.paidDate ? new Date(row.paidDate).toLocaleDateString() : '',
+          row.month,
+          formatCurrency(row.amount),
+          formatCurrency(row.interest || 0),
+          row.isEarlyPayment
+        ]))
+        : [['No repayments', '', '', '', '', '']],
       pdfMeta
     );
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Interest Distribution', pdfMeta, 4);
+    cursorY = addSectionTitle(doc, cursorY, 'Subscriptions', pdfMeta, 4);
     cursorY = addSimpleTable(
       doc,
       cursorY,
-      ['Date', 'Amount', 'Notes'],
-      interestRows.length ? interestRows : [['No interest payouts', '', '']],
+      ['Year', 'Amount', 'Status'],
+      subscriptionRows.length
+        ? subscriptionRows.map((row) => ([
+          row.year,
+          formatCurrency(row.amount),
+          row.status
+        ]))
+        : [['No subscriptions', '', '']],
       pdfMeta
     );
 
@@ -278,6 +299,153 @@ const MemberReports = () => {
       };
     });
   };
+
+  const normalizeLoanId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (value.$id) return value.$id;
+    if (Array.isArray(value)) {
+      const first = value.find((entry) => entry?.$id);
+      return first ? first.$id : '';
+    }
+    return '';
+  };
+
+  const getLoanChargesTotal = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return memberData.loanCharges
+      .filter((charge) => normalizeLoanId(charge.loanId) === target)
+      .reduce((sum, charge) => sum + (parseInt(charge.amount, 10) || 0), 0);
+  };
+
+  const getLoanRepaymentsForLoan = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return filteredLoanRepayments
+      .filter((repayment) => normalizeLoanId(repayment.loanId) === target)
+      .sort((a, b) => {
+        const aDate = new Date(a.paidAt || a.createdAt || a.$createdAt || 0).getTime();
+        const bDate = new Date(b.paidAt || b.createdAt || b.$createdAt || 0).getTime();
+        return aDate - bDate;
+      });
+  };
+
+  const getLoanChargesForLoan = (loanId) => {
+    const target = normalizeLoanId(loanId);
+    return memberData.loanCharges
+      .filter((charge) => normalizeLoanId(charge.loanId) === target)
+      .sort((a, b) => {
+        const aDate = new Date(a.createdAt || a.$createdAt || 0).getTime();
+        const bDate = new Date(b.createdAt || b.$createdAt || 0).getTime();
+        return aDate - bDate;
+      });
+  };
+
+  const getLoanInterestModeLabel = (loan) => {
+    const mode = String(
+      loan?.interestCalculationModeApplied || financialConfig.interestCalculationMode || 'flat'
+    ).trim().toLowerCase();
+    return mode === 'reducing_balance' ? 'Reducing Balance' : 'Flat Principal';
+  };
+
+  const getLoanMonthlyRatePercent = (loan) => {
+    const stored = Number(loan?.monthlyInterestRateApplied);
+    if (Number.isFinite(stored) && stored >= 0) return stored;
+    return loan?.loanType === 'long_term'
+      ? Number(financialConfig.longTermInterestRate || 1.5)
+      : Number(financialConfig.loanInterestRate || 2);
+  };
+
+  const getLoanInterestBasisLabel = (loan) => (
+    `${getLoanInterestModeLabel(loan)} @ ${getLoanMonthlyRatePercent(loan)}%`
+  );
+
+  const parseRepaymentPlan = (loan) => {
+    if (!loan?.repaymentPlan) return [];
+    try {
+      const parsed = JSON.parse(loan.repaymentPlan);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const getRepaymentInterest = (loan, repayment) => {
+    const month = parseInt(repayment?.month, 10);
+    if (!Number.isFinite(month)) return 0;
+    const schedule = parseRepaymentPlan(loan);
+    const match = schedule.find((row) => parseInt(row?.month, 10) === month);
+    return match ? (parseInt(match.interest, 10) || 0) : 0;
+  };
+
+  const buildLoanSummaryRows = () => (
+    filteredLoans.map((loan, index) => ({
+      loanId: loan.$id,
+      label: `Loan_${index + 1}`,
+      loanType: loan.loanType || 'short_term',
+      amount: parseInt(loan.amount, 10) || 0,
+      appliedDate: loan.createdAt || loan.$createdAt || '',
+      status: loan.status || '',
+      interestMode: getLoanInterestModeLabel(loan),
+      interestRatePercent: getLoanMonthlyRatePercent(loan),
+      interestBasis: getLoanInterestBasisLabel(loan),
+      balance: loan.status === 'completed'
+        ? 0
+        : (parseInt(loan.balance, 10) || parseInt(loan.amount, 10) || 0)
+    }))
+  );
+
+  const buildRepaymentHistoryRows = (loan) => {
+    const repaymentRows = getLoanRepaymentsForLoan(loan.$id).map((repayment) => ({
+      loanId: loan.$id,
+      paidDate: repayment.paidAt || repayment.createdAt || repayment.$createdAt || '',
+      month: parseInt(repayment.month, 10) || '',
+      amount: parseInt(repayment.amount, 10) || 0,
+      interest: getRepaymentInterest(loan, repayment),
+      isEarlyPayment: repayment.isEarlyPayment ? 'Yes' : 'No'
+    }));
+
+    const chargeRows = getLoanChargesForLoan(loan.$id).map((charge) => ({
+      loanId: loan.$id,
+      paidDate: charge.createdAt || charge.$createdAt || '',
+      month: '-',
+      amount: parseInt(charge.amount, 10) || 0,
+      interest: 0,
+      isEarlyPayment: 'Bank Charge'
+    }));
+
+    return [...repaymentRows, ...chargeRows].sort((a, b) => {
+      const aDate = new Date(a.paidDate || 0).getTime();
+      const bDate = new Date(b.paidDate || 0).getTime();
+      return aDate - bDate;
+    });
+  };
+
+  const normalizeSubscriptionStatus = (value) => {
+    const status = String(value || '').trim().toLowerCase();
+    if (!status) return 'Paid';
+    if (status.includes('pend') || ['unpaid', 'due', 'overdue'].includes(status)) {
+      return 'Pending';
+    }
+    return 'Paid';
+  };
+
+  const buildSubscriptionRows = () => (
+    filteredSubscriptions.map((subscription) => {
+      const rawMonth = String(subscription.month || '').trim();
+      const year = rawMonth ? rawMonth.split('-')[0] : '';
+      const fallbackDate = new Date(subscription.createdAt || subscription.$createdAt || 0);
+      const resolvedYear = year || (Number.isFinite(fallbackDate.getTime()) ? String(fallbackDate.getFullYear()) : '');
+      return {
+        year: resolvedYear,
+        amount: parseInt(subscription.amount, 10) || 0,
+        status: normalizeSubscriptionStatus(subscription.status)
+      };
+    })
+  );
+
+  const loanSummaryRows = buildLoanSummaryRows();
+  const repaymentHistoryRows = filteredLoans.flatMap((loan) => buildRepaymentHistoryRows(loan));
+  const subscriptionRows = buildSubscriptionRows();
 
   const generateMonthlyBreakdown = (year) => {
     const months = [];
@@ -308,7 +476,8 @@ const MemberReports = () => {
       const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
       const totalLoanAmount = activeLoans.reduce((total, loan) => total + loan.amount, 0);
       const totalLoanBalance = activeLoans.reduce((total, loan) => total + (loan.balance || loan.amount), 0);
-      const loanEligibility = totalSavings * 0.8;
+      const eligibilityPercent = (Number(financialConfig.loanEligibilityPercentage) || 80) / 100;
+      const loanEligibility = totalSavings * eligibilityPercent;
       const availableCredit = Math.max(0, loanEligibility - totalLoanBalance);
       const statement = {
         memberInfo: {
@@ -360,15 +529,65 @@ const MemberReports = () => {
       
       if (filteredLoans.length > 0) {
         csvContent += '\n\nLOAN HISTORY\n';
-        csvContent += 'Amount,Duration,Purpose,Status,Applied Date,Balance\n';
+        csvContent += 'Amount,Duration,Purpose,Status,Applied Date,Interest Mode,Rate (%),Balance\n';
         
         const loansData = filteredLoans
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .map(loan => 
-            `${loan.amount},${loan.duration} months,"${loan.purpose || 'N/A'}",${loan.status},${new Date(loan.createdAt).toLocaleDateString()},${loan.balance || loan.amount}`
-          );
+          .map(loan => {
+            const interestMode = getLoanInterestModeLabel(loan);
+            const rate = getLoanMonthlyRatePercent(loan);
+            return `${loan.amount},${loan.duration} months,"${loan.purpose || 'N/A'}",${loan.status},${new Date(loan.createdAt).toLocaleDateString()},${interestMode},${rate}%,${loan.balance || loan.amount}`;
+          });
         
         csvContent += loansData.join('\n');
+      }
+      if (loanSummaryRows.length > 0) {
+        csvContent += '\n\nLOAN SUMMARY\n';
+        csvContent += 'Loan,Type,Amount,Applied Date,Status,Interest Mode,Rate (%),Interest Basis,Repayment Months,Bank Charges,Balance\n';
+        csvContent += loanSummaryRows.map((row) =>
+          [
+            row.label,
+            row.loanType,
+            row.amount,
+            row.appliedDate ? new Date(row.appliedDate).toLocaleDateString() : '',
+            row.status,
+            row.interestMode,
+            `${row.interestRatePercent}%`,
+            `"${row.interestBasis}"`,
+            row.repaymentMonths,
+            row.bankCharges,
+            row.balance
+          ].join(',')
+        ).join('\n');
+      }
+
+      if (repaymentHistoryRows.length > 0) {
+        csvContent += '\n\nLOAN REPAYMENT HISTORY\n';
+        csvContent += 'Loan,Paid Date,Month,Amount,Early Payment\n';
+        csvContent += repaymentHistoryRows.map((row) =>
+          [
+            loanSummaryRows.find((loan) => loan.loanId === row.loanId)?.label || 'Loan',
+            row.paidDate ? new Date(row.paidDate).toLocaleDateString() : '',
+            row.month,
+            row.amount,
+            row.isEarlyPayment
+          ].join(',')
+        ).join('\n');
+      }
+
+      if (repaymentPlanRows.length > 0) {
+        csvContent += '\n\nLOAN REPAYMENT PLAN\n';
+        csvContent += 'Loan,Month,Payment,Principal,Interest,Balance\n';
+        csvContent += repaymentPlanRows.map((row) =>
+          [
+            loanSummaryRows.find((loan) => loan.loanId === row.loanId)?.label || 'Loan',
+            row.month,
+            row.payment,
+            row.principal,
+            row.interest,
+            row.balance
+          ].join(',')
+        ).join('\n');
       }
     } else {
       // Handle array data
@@ -489,14 +708,14 @@ const MemberReports = () => {
           <div className="space-y-4">
             <button
               onClick={exportMemberPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Download Member Report (PDF)
             </button>
             <button
               onClick={() => exportToCSV(null, 'financial-statement')}
-              className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Download Financial Statement
@@ -510,7 +729,7 @@ const MemberReports = () => {
                 })),
                 'savings-history'
               )}
-              className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Download Savings History
@@ -529,11 +748,13 @@ const MemberReports = () => {
                   purpose: loan.purpose || 'N/A',
                   status: loan.status,
                   appliedDate: new Date(loan.createdAt).toLocaleDateString(),
+                  interestMode: getLoanInterestModeLabel(loan),
+                  interestRatePercent: `${getLoanMonthlyRatePercent(loan)}%`,
                   balance: loan.balance || loan.amount
                 })),
                 'loan-history'
               )}
-              className="w-full flex items-center justify-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
               disabled={filteredLoans.length === 0}
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />

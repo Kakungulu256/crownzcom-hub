@@ -29,6 +29,44 @@ const LOAN_SUBMIT_FUNCTION_ID =
   import.meta.env.VITE_APPWRITE_LOAN_SUBMIT_FUNCTION_ID ||
   'longterm-loan-submit';
 
+const parseJsonSafely = (value) => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const extractFunctionExecutionError = (execution, fallbackMessage) => {
+  const parsedBody = parseJsonSafely(execution?.responseBody);
+  if (parsedBody && parsedBody.success === false && parsedBody.error) {
+    return parsedBody.error;
+  }
+
+  if (typeof execution?.errors === 'string' && execution.errors.trim()) {
+    return execution.errors.trim();
+  }
+
+  const statusCode = Number(execution?.responseStatusCode);
+  if (Number.isFinite(statusCode) && statusCode >= 400) {
+    const bodyText = typeof execution?.responseBody === 'string'
+      ? execution.responseBody.trim()
+      : '';
+    if (bodyText) {
+      return bodyText.length > 300 ? `${bodyText.slice(0, 300)}...` : bodyText;
+    }
+    return `${fallbackMessage} (HTTP ${statusCode})`;
+  }
+
+  const status = String(execution?.status || '').trim();
+  if (status && status.toLowerCase() !== 'completed') {
+    return `${fallbackMessage} (execution status: ${status})`;
+  }
+
+  return fallbackMessage;
+};
+
 const MemberLoans = () => {
   const { user } = useAuth();
   const [loans, setLoans] = useState([]);
@@ -36,6 +74,7 @@ const MemberLoans = () => {
   const [loanCharges, setLoanCharges] = useState([]);
   const [loanRepayments, setLoanRepayments] = useState([]);
   const [loanGuarantorRequests, setLoanGuarantorRequests] = useState([]);
+  const [earlyRepaymentRequests, setEarlyRepaymentRequests] = useState([]);
   const [memberData, setMemberData] = useState({ totalSavings: 0, memberId: null });
   const [loading, setLoading] = useState(true);
   const [showApplicationForm, setShowApplicationForm] = useState(false);
@@ -122,7 +161,7 @@ const MemberLoans = () => {
       const memberId = member.$id;
       
       // Fetch member's savings and loans
-      const [savings, loans, charges, repayments, config] = await Promise.all([
+      const [savings, loans, charges, repayments, config, earlyRequests] = await Promise.all([
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS, [
           Query.equal('memberId', memberId)
         ]),
@@ -131,7 +170,12 @@ const MemberLoans = () => {
         ]),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
-        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG)
+        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG),
+        COLLECTIONS.LOAN_EARLY_REPAYMENTS
+          ? listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_EARLY_REPAYMENTS, [
+            Query.equal('memberId', memberId)
+          ])
+          : Promise.resolve([])
       ]);
       let membersList = [];
       try {
@@ -151,6 +195,9 @@ const MemberLoans = () => {
       ));
       setLoanRepayments(repayments.filter(repayment =>
         loanIds.has(normalizeLoanId(repayment.loanId))
+      ));
+      setEarlyRepaymentRequests(earlyRequests.filter((request) =>
+        loanIds.has(normalizeLoanId(request.loanId))
       ));
       let guarantorRequests = [];
       if (COLLECTIONS.LOAN_GUARANTORS) {
@@ -313,9 +360,23 @@ const MemberLoans = () => {
         JSON.stringify(loanSubmitPayload)
       );
 
-      const result = JSON.parse(response?.responseBody || '{}');
+      const result = parseJsonSafely(response?.responseBody);
+      if (!result) {
+        throw new Error(
+          extractFunctionExecutionError(
+            response,
+            'Loan function returned an unreadable response. Check Appwrite function logs.'
+          )
+        );
+      }
+
       if (!result.success) {
-        throw new Error(result.error || 'Loan submission failed.');
+        throw new Error(
+          extractFunctionExecutionError(
+            response,
+            result.error || 'Loan submission failed.'
+          )
+        );
       }
 
       const successMessage = result.status === 'pending_guarantor_approval'
@@ -586,44 +647,57 @@ const MemberLoans = () => {
   const getEarlyPayoffAmount = (loan, monthNumber) => {
     const principal = parseInt(loan?.amount, 10) || 0;
     const currentBalance = parseInt(loan?.balance, 10) || principal;
+    let openingBalance = currentBalance;
+    if (loan?.repaymentPlan) {
+      try {
+        const schedule = JSON.parse(loan.repaymentPlan);
+        const previous = schedule.find((item) => parseInt(item.month, 10) === parseInt(monthNumber, 10) - 1);
+        if (previous && previous.balance !== undefined && previous.balance !== null) {
+          openingBalance = Math.max(0, parseInt(previous.balance, 10) || openingBalance);
+        } else if (parseInt(monthNumber, 10) <= 1) {
+          openingBalance = principal;
+        }
+      } catch {
+        openingBalance = currentBalance;
+      }
+    }
+    const principalOutstanding = Math.min(currentBalance, openingBalance || currentBalance);
     const monthlyRate = getLoanMonthlyRatePercent(loan) / 100;
     const mode = getLoanInterestCalculationMode(loan);
     const interestBase = mode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
-      ? currentBalance
+      ? principalOutstanding
       : principal;
     const penaltyRate = (financialConfig.earlyRepaymentPenalty || 0) / 100;
-    const interestAmount = (interestBase * monthlyRate) + (interestBase * penaltyRate);
+    const interestAmount = Math.ceil(interestBase * monthlyRate) + Math.ceil(interestBase * penaltyRate);
     const hasFirstMonthRepayment = loanRepayments.some(
       repayment => normalizeLoanId(repayment.loanId) === normalizeLoanId(loan.$id) && parseInt(repayment.month) === 1
     );
     const chargeAmount = monthNumber === 1 && !hasFirstMonthRepayment ? getLoanChargeTotal(loan.$id) : 0;
-    return Math.ceil(currentBalance + interestAmount + chargeAmount);
+    return Math.ceil(principalOutstanding + interestAmount + chargeAmount);
   };
 
   const requestEarlyPayoff = async () => {
     if (!selectedLoan) return;
     try {
       setEarlyPayoffLoading(true);
-      const monthNumber = getNextUnpaidMonth(selectedLoan);
       const response = await functions.createExecution(
         import.meta.env.VITE_APPWRITE_LOAN_FUNCTION_ID,
         JSON.stringify({
-          action: 'recordRepayment',
+          action: 'requestEarlyRepayment',
           loanId: selectedLoan.$id,
-          month: monthNumber,
-          isEarlyPayment: true,
-          paidAt: earlyPayoffDate
+          memberId: memberData.memberId,
+          requestedForDate: earlyPayoffDate
         })
       );
       const result = JSON.parse(response.responseBody || '{}');
       if (!result.success) {
-        throw new Error(result.error || 'Early payoff failed');
+        throw new Error(result.error || 'Early payoff request failed');
       }
-      toast.success('Early payoff recorded');
+      toast.success('Early payoff request submitted to admin');
       setSelectedLoan(null);
       await fetchData();
     } catch (error) {
-      toast.error(error.message || 'Failed to record early payoff');
+      toast.error(error.message || 'Failed to request early payoff');
     } finally {
       setEarlyPayoffLoading(false);
     }
@@ -659,6 +733,45 @@ const MemberLoans = () => {
     if (status === 'declined') return 'bg-red-100 text-red-800';
     if (status === 'released') return 'bg-blue-100 text-blue-800';
     return 'bg-gray-100 text-gray-800';
+  };
+
+  const getEarlyRepaymentStatusClass = (status) => {
+    if (status === 'pending') return 'bg-yellow-100 text-yellow-800';
+    if (status === 'paid') return 'bg-green-100 text-green-800';
+    if (status === 'cancelled') return 'bg-gray-100 text-gray-700';
+    if (status === 'void') return 'bg-rose-100 text-rose-800';
+    return 'bg-blue-100 text-blue-800';
+  };
+
+  const getLoanEarlyRepaymentRequests = (loanId) => {
+    return earlyRepaymentRequests.filter(
+      (request) => normalizeLoanId(request.loanId) === normalizeLoanId(loanId)
+    );
+  };
+
+  const cancelEarlyPayoffRequest = async (requestId) => {
+    try {
+      if (!requestId) return;
+      setEarlyPayoffLoading(true);
+      const response = await functions.createExecution(
+        import.meta.env.VITE_APPWRITE_LOAN_FUNCTION_ID,
+        JSON.stringify({
+          action: 'cancelEarlyRepaymentRequest',
+          requestId,
+          memberId: memberData.memberId
+        })
+      );
+      const result = JSON.parse(response.responseBody || '{}');
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to cancel early payoff request');
+      }
+      toast.success('Early payoff request cancelled');
+      await fetchData();
+    } catch (error) {
+      toast.error(error.message || 'Failed to cancel early payoff request');
+    } finally {
+      setEarlyPayoffLoading(false);
+    }
   };
 
   return (
@@ -1409,12 +1522,12 @@ const MemberLoans = () => {
 
                 {selectedLoan.status === 'active' && (
                   <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                    <label className="block text-sm font-medium text-gray-500 mb-2">Early Payoff</label>
+                    <label className="block text-sm font-medium text-gray-500 mb-2">Early Payoff Request</label>
                     <div className="text-sm text-gray-700 mb-3">
-                      Select a date to pay off your remaining balance in full (includes the early repayment penalty).
+                      Select a date and submit a request. Admin will review and mark the payoff as paid.
                     </div>
                     <div className="text-xs text-gray-500 mb-3">
-                      Basis used: {getLoanInterestBasisLabel(selectedLoan)}
+                      Basis used: {getLoanInterestBasisLabel(selectedLoan)} (interest for this month only + early penalty).
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                       <div>
@@ -1441,9 +1554,61 @@ const MemberLoans = () => {
                         {earlyPayoffLoading && (
                           <span className="mr-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" />
                         )}
-                        Pay Off Early
+                        Request Early Payoff
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {COLLECTIONS.LOAN_EARLY_REPAYMENTS && (
+                  <div className="border border-slate-200 rounded-lg p-4 bg-white">
+                    <label className="block text-sm font-medium text-gray-500 mb-2">
+                      Early Payoff Request Status
+                    </label>
+                    {(() => {
+                      const requests = getLoanEarlyRepaymentRequests(selectedLoan.$id);
+                      if (requests.length === 0) {
+                        return <p className="text-sm text-gray-500">No early payoff requests yet.</p>;
+                      }
+                      return (
+                        <div className="space-y-3">
+                          {requests
+                            .slice()
+                            .sort((a, b) => new Date(b.requestedAt || b.createdAt) - new Date(a.requestedAt || a.createdAt))
+                            .map((request) => (
+                              <div key={request.$id} className="border border-slate-200 rounded-lg p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <div className="text-sm font-medium text-gray-900">
+                                      {formatCurrency(request.amount || getEarlyPayoffAmount(selectedLoan, request.month || getNextUnpaidMonth(selectedLoan)))}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      Requested: {request.requestedForDate
+                                        ? new Date(request.requestedForDate).toLocaleDateString()
+                                        : (request.requestedAt ? new Date(request.requestedAt).toLocaleDateString() : 'N/A')}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getEarlyRepaymentStatusClass(request.status)}`}>
+                                      {request.status || 'pending'}
+                                    </span>
+                                    {request.status === 'pending' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => cancelEarlyPayoffRequest(request.$id)}
+                                        className="text-xs font-semibold text-red-600 hover:text-red-800"
+                                        disabled={earlyPayoffLoading}
+                                      >
+                                        Cancel
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 

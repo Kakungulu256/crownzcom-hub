@@ -12,6 +12,31 @@ module.exports = async ({ req, res, log, error }) => {
 
   let userId = null;
   let authUserCreated = false;
+  const ADMIN_LABEL = process.env.ADMIN_LABEL || 'admin';
+  const ADMIN_USER_IDS = new Set(
+    String(process.env.ADMIN_USER_IDS || process.env.APPWRITE_ADMIN_USER_IDS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+
+  const getRequesterUserId = (request) => {
+    const headers = request?.headers || {};
+    return (
+      headers['x-appwrite-user-id'] ||
+      headers['X-Appwrite-User-Id'] ||
+      headers['x-appwrite-userid'] ||
+      headers['X-Appwrite-Userid'] ||
+      null
+    );
+  };
+
+  const isAdminUser = async (requesterId) => {
+    if (!requesterId) return false;
+    if (ADMIN_USER_IDS.has(requesterId)) return true;
+    const user = await users.get(requesterId);
+    return Array.isArray(user.labels) && user.labels.includes(ADMIN_LABEL);
+  };
 
   try {
     const {
@@ -52,6 +77,71 @@ module.exports = async ({ req, res, log, error }) => {
       return res.json({
         success: true,
         message: 'Member deletion processed'
+      });
+    }
+
+    if (action === 'adminUpdateMemberAuth') {
+      const requesterId = getRequesterUserId(req);
+      const isAdmin = await isAdminUser(requesterId);
+      if (!isAdmin) {
+        return res.json({ success: false, error: 'Admin privileges required.' }, 403);
+      }
+
+      if (!memberId) {
+        throw new Error('memberId is required for admin updates.');
+      }
+
+      const memberDoc = await databases.getDocument(
+        process.env.DATABASE_ID,
+        process.env.MEMBERS_COLLECTION_ID,
+        memberId
+      );
+
+      const resolvedAuthUserId = authUserId || memberDoc.authUserId;
+      if (!resolvedAuthUserId) {
+        throw new Error('authUserId could not be resolved for this member.');
+      }
+
+      const updates = {};
+      if (name !== undefined) updates.name = String(name).trim();
+      if (phone !== undefined) updates.phone = String(phone).trim();
+      if (email !== undefined) updates.email = String(email).trim().toLowerCase();
+      if (membershipNumber !== undefined) updates.membershipNumber = String(membershipNumber).trim();
+      if (joinDate !== undefined) updates.joinDate = joinDate;
+
+      const authUpdated = {
+        emailUpdated: false,
+        passwordUpdated: false
+      };
+
+      if (email) {
+        await users.updateEmail(resolvedAuthUserId, String(email).trim().toLowerCase());
+        authUpdated.emailUpdated = true;
+      }
+
+      if (password) {
+        await users.updatePassword(resolvedAuthUserId, String(password));
+        authUpdated.passwordUpdated = true;
+      }
+
+      let memberUpdated = false;
+      if (Object.keys(updates).length > 0) {
+        await databases.updateDocument(
+          process.env.DATABASE_ID,
+          process.env.MEMBERS_COLLECTION_ID,
+          memberId,
+          updates
+        );
+        memberUpdated = true;
+      }
+
+      return res.json({
+        success: true,
+        memberId,
+        authUserId: resolvedAuthUserId,
+        authUpdated,
+        memberUpdated,
+        message: 'Admin member auth/profile update completed.'
       });
     }
 

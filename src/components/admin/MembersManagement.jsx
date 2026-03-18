@@ -27,7 +27,9 @@ const MembersManagement = () => {
     charges: []
   });
   
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm();
+  const newPassword = watch('newPassword', '');
+  const confirmPassword = watch('confirmPassword', '');
 
   useEffect(() => {
     fetchMembers();
@@ -52,14 +54,54 @@ const MembersManagement = () => {
   try {
     setIsSavingMember(true);
     if (editingMember) {
-      // Update existing member
-      await databases.updateDocument(DATABASE_ID, COLLECTIONS.MEMBERS, editingMember.$id, {
-        name: data.name,
-        email: data.email,
-        phone: data.phone,
-        membershipNumber: data.membershipNumber,
-        joinDate: data.joinDate || editingMember.joinDate || null
-      });
+      const passwordProvided = Boolean(newPassword);
+      if (passwordProvided && newPassword !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
+
+      const nextEmail = String(data.email || '').trim().toLowerCase();
+      const existingEmail = String(editingMember.email || '').trim().toLowerCase();
+      const emailChanged = nextEmail && nextEmail !== existingEmail;
+
+      if (emailChanged || passwordProvided) {
+        if (!CREATE_MEMBER_FUNCTION_ID) {
+          throw new Error('Create-member function ID is not configured.');
+        }
+
+        const response = await functions.createExecution(
+          CREATE_MEMBER_FUNCTION_ID,
+          JSON.stringify({
+            action: 'adminUpdateMemberAuth',
+            memberId: editingMember.$id,
+            authUserId: editingMember.authUserId || null,
+            name: data.name,
+            email: nextEmail,
+            phone: data.phone,
+            membershipNumber: data.membershipNumber,
+            joinDate: data.joinDate || editingMember.joinDate || null,
+            password: passwordProvided ? newPassword : undefined
+          })
+        );
+
+        if (!response?.responseBody) {
+          throw new Error('Admin update function returned an empty response.');
+        }
+
+        const result = JSON.parse(response.responseBody);
+        if (!result.success) {
+          throw new Error(result.error || 'Admin update function failed.');
+        }
+      } else {
+        // Update existing member (DB only)
+        await databases.updateDocument(DATABASE_ID, COLLECTIONS.MEMBERS, editingMember.$id, {
+          name: data.name,
+          email: data.email,
+          phone: data.phone,
+          membershipNumber: data.membershipNumber,
+          joinDate: data.joinDate || editingMember.joinDate || null
+        });
+      }
+
       toast.success('Member updated successfully');
     } else {
       // Create new member using Appwrite Function (Auth + DB)
@@ -150,7 +192,9 @@ const MembersManagement = () => {
       email: member.email,
       phone: member.phone,
       membershipNumber: member.membershipNumber,
-      joinDate: member.joinDate ? new Date(member.joinDate).toISOString().split('T')[0] : ''
+      joinDate: member.joinDate ? new Date(member.joinDate).toISOString().split('T')[0] : '',
+      newPassword: '',
+      confirmPassword: ''
     });
     setShowAddForm(true);
   };
@@ -315,6 +359,48 @@ const MembersManagement = () => {
                   {errors.password && (
                     <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>
                   )}
+                </div>
+              )}
+              {editingMember && (
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Reset Password (Optional)
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <input
+                        {...register('newPassword', {
+                          minLength: {
+                            value: 8,
+                            message: 'Password must be at least 8 characters'
+                          }
+                        })}
+                        type="password"
+                        className="form-input"
+                        placeholder="New password"
+                      />
+                      {errors.newPassword && (
+                        <p className="mt-1 text-sm text-red-600">{errors.newPassword.message}</p>
+                      )}
+                    </div>
+                    <div>
+                      <input
+                        {...register('confirmPassword', {
+                          validate: (value) =>
+                            !newPassword || value === newPassword || 'Passwords do not match'
+                        })}
+                        type="password"
+                        className="form-input"
+                        placeholder="Confirm new password"
+                      />
+                      {errors.confirmPassword && (
+                        <p className="mt-1 text-sm text-red-600">{errors.confirmPassword.message}</p>
+                      )}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Leave blank to keep the existing password.
+                  </p>
                 </div>
               )}
             </div>

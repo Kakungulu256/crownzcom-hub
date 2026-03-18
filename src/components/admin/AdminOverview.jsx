@@ -5,6 +5,8 @@ import { formatCurrency } from '../../utils/financial';
 import { UsersIcon, BanknotesIcon, CreditCardIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import { listAllDocuments } from '../../lib/pagination';
 
+const PENDING_APPROVAL_STATUSES = new Set(['pending', 'pending_admin_approval']);
+
 const AdminOverview = () => {
   const [stats, setStats] = useState({
     totalMembers: 0,
@@ -38,7 +40,7 @@ const AdminOverview = () => {
       const activeLoans = loans.filter(loan => 
         loan.status === 'active'
       );
-      const pendingLoans = loans.filter(loan => loan.status === 'pending');
+      const pendingLoans = loans.filter(loan => PENDING_APPROVAL_STATUSES.has(loan.status));
       const totalLoanAmount = activeLoans.reduce((sum, loan) => sum + loan.amount, 0);
       const availableBalance = Math.max(0, totalSavings - totalLoanAmount);
 
@@ -154,7 +156,7 @@ const AdminOverview = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 mb-8">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 mb-8">
         {statCards.map((stat) => (
           <div key={stat.name} className={`stat-card ${stat.bgColor}`}>
             <div className="flex items-center">
@@ -162,7 +164,7 @@ const AdminOverview = () => {
                 <p className="text-sm font-medium text-gray-600 mb-1">
                   {stat.name}
                 </p>
-                <p className="text-2xl font-bold text-gray-900 whitespace-nowrap overflow-hidden text-ellipsis">
+                <p className="text-xl font-bold text-gray-900 break-words leading-tight">
                   {stat.value}
                 </p>
               </div>

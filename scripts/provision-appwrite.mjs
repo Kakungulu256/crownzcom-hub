@@ -345,6 +345,36 @@ const COLLECTIONS = [
       { key: 'idx_guarantors_loan_status', type: 'key', attrs: ['loanId', 'status'] },
       { key: 'idx_guarantors_unique_loan_guarantor', type: 'unique', attrs: ['loanId', 'guarantorId'] }
     ]
+  },
+  {
+    name: 'loan_early_repayment_requests',
+    envKey: 'VITE_APPWRITE_LOAN_EARLY_REPAYMENTS_COLLECTION_ID',
+    id: collectionIdValue('VITE_APPWRITE_LOAN_EARLY_REPAYMENTS_COLLECTION_ID', 'LOAN_EARLY_REPAYMENTS_COLLECTION_ID', 'loan_early_repayment_requests'),
+    attributes: [
+      { type: 'string', key: 'loanId', size: 100, required: true },
+      { type: 'string', key: 'memberId', size: 100, required: true },
+      { type: 'string', key: 'status', size: 30, required: true },
+      { type: 'integer', key: 'month', required: false },
+      { type: 'integer', key: 'amount', required: false },
+      { type: 'string', key: 'interestCalculationModeApplied', size: 40, required: false },
+      { type: 'float', key: 'monthlyInterestRateApplied', required: false },
+      { type: 'float', key: 'penaltyRateApplied', required: false },
+      { type: 'integer', key: 'interestAmount', required: false },
+      { type: 'integer', key: 'principalAmount', required: false },
+      { type: 'integer', key: 'chargeAmount', required: false },
+      { type: 'integer', key: 'balanceAtRequest', required: false },
+      { type: 'datetime', key: 'requestedAt', required: false },
+      { type: 'datetime', key: 'requestedForDate', required: false },
+      { type: 'datetime', key: 'resolvedAt', required: false },
+      { type: 'datetime', key: 'paidAt', required: false },
+      { type: 'string', key: 'adminComment', size: 500, required: false }
+    ],
+    indexes: [
+      { key: 'idx_early_repay_loan', type: 'key', attrs: ['loanId'] },
+      { key: 'idx_early_repay_member', type: 'key', attrs: ['memberId'] },
+      { key: 'idx_early_repay_status', type: 'key', attrs: ['status'] },
+      { key: 'idx_early_repay_requested', type: 'key', attrs: ['requestedAt'] }
+    ]
   }
 ];
 

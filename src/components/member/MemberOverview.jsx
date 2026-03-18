@@ -40,6 +40,19 @@ const MemberOverview = () => {
     return typeof value === 'object' && value.$id ? value.$id : value;
   };
 
+  const toTitleCase = (value) => {
+    if (!value) return '';
+    return String(value)
+      .trim()
+      .split(/\s+/)
+      .map((word) => {
+        if (!word) return '';
+        const lower = word.toLowerCase();
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+      })
+      .join(' ');
+  };
+
   const getGuarantorStatusBadgeClass = (status) => {
     if (status === 'pending') return 'bg-yellow-100 text-yellow-800';
     if (status === 'approved') return 'bg-green-100 text-green-800';
@@ -292,14 +305,16 @@ const MemberOverview = () => {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900">Welcome back, {user?.name}!</h1>
+        <h1 className="text-3xl font-bold text-slate-900">
+          Welcome back, {toTitleCase(user?.name)}!
+        </h1>
         <p className="mt-2 text-sm text-slate-600">
           Here’s a clean snapshot of your account.
         </p>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5 mb-8">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 mb-8">
         <div className="bg-white overflow-hidden shadow rounded-2xl border border-slate-100">
           <div className="p-5">
             <div className="flex items-center">
@@ -310,10 +325,10 @@ const MemberOverview = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className="text-sm font-medium text-gray-500 leading-tight">
                     Total Savings
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className="text-base font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(memberData.totalSavings)}
                   </dd>
                 </dl>
@@ -332,10 +347,10 @@ const MemberOverview = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className="text-sm font-medium text-gray-500 leading-tight">
                     Loan Eligibility
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className="text-base font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(memberData.loanEligibility)}
                   </dd>
                 </dl>
@@ -354,10 +369,10 @@ const MemberOverview = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className="text-sm font-medium text-gray-500 leading-tight">
                     Available Credit
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className="text-base font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(memberData.availableCredit)}
                   </dd>
                 </dl>
@@ -376,10 +391,10 @@ const MemberOverview = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className="text-sm font-medium text-gray-500 leading-tight">
                     Available Balance
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className="text-base font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(memberData.availableBalance || 0)}
                   </dd>
                 </dl>
@@ -398,10 +413,10 @@ const MemberOverview = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className="text-sm font-medium text-gray-500 leading-tight">
                     Active Loans
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className="text-base font-semibold text-gray-900 break-words leading-tight">
                     {memberData.activeLoans}
                   </dd>
                 </dl>

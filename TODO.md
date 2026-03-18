@@ -77,3 +77,65 @@ Use this checklist for the new requirement: admin can switch interest from flat 
 - [x] 6. Add migration/backfill for existing loans/config docs so pre-existing loans remain valid (default to `flat` where missing).
 - [x] 7. Add automated tests for both modes (flat and reducing balance), including edge cases.
 - [x] 8. Run rollout verification script(s), validate in UI, and document deploy/migration order.
+
+---
+
+# Combined TODO (Auth Sync + Reports + Member Loan Details)
+
+Use this checklist to implement one task at a time, in strict order.
+
+- [x] 1. Define the admin-auth sync action to add to `functions/create-member/main.js` (inputs, admin validation, expected outputs).
+- [x] 2. Implement the admin-auth sync action to update Appwrite Auth email/password via `Users` and then sync the `members` document.
+- [x] 3. Update admin member edit flow to call the new function for email changes (Auth + DB) instead of direct DB-only updates.
+- [x] 4. Add admin password reset UI + wire it to the same function (Auth-only update; no password stored in DB).
+- [x] 5. Update report calculations to use `financialConfig.loanEligibilityPercentage` instead of hard-coded 0.8 in member/admin reports.
+- [x] 6. Normalize Appwrite relationship IDs in member/admin reports so loan charges/repayments resolve consistently.
+- [x] 7. Fetch member loan repayments in `src/components/member/MemberReports.jsx` for detailed reporting.
+- [x] 8. Build per-loan datasets in member reports: Loan Summary, Repayment History, Repayment Plan.
+- [x] 9. Extend member PDF export with Loan Summary, Repayment History, and Repayment Plan sections (per loan).
+- [x] 10. Extend member CSV exports with Loan Summary, Repayment History, and Repayment Plan outputs.
+- [x] 11. Add interest mode + applied rate fields to member loan exports (PDF + CSV).
+- [x] 12. Align report date-range behavior for “due/overdue” labels to avoid confusion on historical ranges.
+- [x] 13. Apply minor reports UX polish (table density, section labels, and export button consistency).
+
+---
+
+# UI/UX + Report PDF Fixes
+
+Use this checklist to implement one task at a time, in strict order.
+
+- [x] 1. Fix KPI/metric card truncation on Member Overview (labels and currency values).
+- [x] 2. Fix KPI/metric card truncation on Admin Overview and Admin Reports Snapshot.
+- [x] 3. Improve greeting capitalization on Member Overview (e.g., title-case full name).
+- [x] 4. Remove redundant "Back to Overview" link on pages already at Overview (member + admin).
+- [x] 5. Adjust Reports date-range helper text spacing so it doesn’t crowd the inputs.
+- [x] 6. PDF: Widen/reshape Loan Summary table so "Interest Mode" doesn’t wrap awkwardly.
+- [x] 7. PDF: Add % symbol to interest rate in Loan Summary table.
+- [x] 8. PDF: Ensure completed loans show correct balance (0 or actual outstanding) in report.
+- [x] 9. PDF: Add clearer section continuity when tables span pages (e.g., repeat section header or “(cont.)”).
+
+---
+
+# New Requirements TODO (Roles + Batch Savings + Notifications + Member Profile)
+
+Use this checklist to implement one task at a time, in strict order.
+
+- [ ] 1. Confirm notification rules:
+  - Overdue loan definition (schedule date + grace period).
+  - Missing savings rule (monthly requirement, how late payments count).
+- [ ] 2. Update role model to allow dual roles (admin + member):
+  - Choose source of truth (Appwrite labels vs `members.roles` array).
+  - Ensure both roles can be held simultaneously.
+- [ ] 3. Add role switcher UI so dual-role users can switch portals.
+- [ ] 4. Update auth gating to respect multi-role access (admin and member).
+- [ ] 5. Add Admin "Batch Savings" entry UI:
+  - Single date selector.
+  - Member list with per-member amount inputs.
+- [ ] 6. Add Appwrite Function `batchAddSavings` with admin-only validation.
+- [ ] 7. Wire Admin batch savings UI to the function and handle errors/success.
+- [ ] 8. Move "Pending Admin Approval" section to top of Admin Loans page.
+- [ ] 9. Fix Admin Loans portfolio figure truncation (wrap/shrink/responsive).
+- [ ] 10. Add notification bell in admin header (pending approvals count).
+- [ ] 11. Add notification bell in member header (overdue loans + missing savings).
+- [ ] 12. Member Profile: enable email change (Auth + members collection sync).
+- [ ] 13. Member Profile: comment out/disable "Change Password" section under Security Settings.

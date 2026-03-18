@@ -148,7 +148,10 @@ const ReportsManagement = () => {
     if (!value) return '';
     if (typeof value === 'string') return value;
     if (value.$id) return value.$id;
-    if (Array.isArray(value) && value[0]?.$id) return value[0].$id;
+    if (Array.isArray(value)) {
+      const first = value.find((entry) => entry?.$id);
+      return first ? first.$id : '';
+    }
     return '';
   };
 
@@ -156,7 +159,10 @@ const ReportsManagement = () => {
     if (!value) return '';
     if (typeof value === 'string') return value;
     if (value.$id) return value.$id;
-    if (Array.isArray(value) && value[0]?.$id) return value[0].$id;
+    if (Array.isArray(value)) {
+      const first = value.find((entry) => entry?.$id);
+      return first ? first.$id : '';
+    }
     return '';
   };
 
@@ -198,6 +204,44 @@ const ReportsManagement = () => {
   const filteredLoanCharges = filterByDate(reportData.loanCharges, 'createdAt');
   const filteredInterestMonthly = filterByDate(reportData.interestMonthly, 'createdAt');
 
+  const getReportReferenceDate = () => {
+    if (reportEndDate) {
+      const end = new Date(reportEndDate);
+      end.setHours(23, 59, 59, 999);
+      return end;
+    }
+    if (reportStartDate) {
+      const start = new Date(reportStartDate);
+      start.setHours(0, 0, 0, 0);
+      return start;
+    }
+    return new Date();
+  };
+
+  const getSnapshotDate = () => {
+    if (reportEndDate) {
+      const end = new Date(reportEndDate);
+      end.setHours(23, 59, 59, 999);
+      return end;
+    }
+    return new Date();
+  };
+
+  const isBeforeStart = (value) => {
+    if (!reportStartDate) return false;
+    const target = toDate(value);
+    if (!target) return false;
+    const start = new Date(reportStartDate);
+    start.setHours(0, 0, 0, 0);
+    return target < start;
+  };
+
+  const isOnOrBeforeSnapshot = (value) => {
+    const target = toDate(value);
+    if (!target) return false;
+    return target <= getSnapshotDate();
+  };
+
   const sumLedgerByTypes = (types) => {
     return filteredLedger
       .filter(entry => types.includes(entry.type))
@@ -235,6 +279,22 @@ const ReportsManagement = () => {
   };
 
   const clampNonNegative = (value) => Math.max(0, toInteger(value, 0));
+
+  const normalizeUnitTrustType = (value) => {
+    const type = String(value || '').trim().toLowerCase();
+    if (type === 'withdrawal' || type === 'withdraw') return 'withdrawal';
+    if (type === 'interest') return 'interest';
+    return 'purchase';
+  };
+
+  const sumUnitTrustByType = (items) => (
+    items.reduce((acc, record) => {
+      const type = normalizeUnitTrustType(record?.type);
+      const amount = toInteger(record?.amount, 0);
+      acc[type] += amount;
+      return acc;
+    }, { purchase: 0, withdrawal: 0, interest: 0 })
+  );
 
   const normalizeInterestCalculationMode = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
@@ -405,7 +465,7 @@ const ReportsManagement = () => {
 
   const getLoanDueState = (loan, nextDue) => {
     if (loan.status === 'completed' || !nextDue) return 'Completed';
-    const expectedMonth = getExpectedInstallmentMonth(loan, new Date());
+    const expectedMonth = getExpectedInstallmentMonth(loan, getReportReferenceDate());
     if (nextDue.month < expectedMonth) return 'Overdue';
     if (nextDue.month === expectedMonth) return 'Due This Month';
     return 'Current';
@@ -413,7 +473,7 @@ const ReportsManagement = () => {
 
   const getLoanOverdueAmount = (loan, nextDue) => {
     if (!nextDue) return 0;
-    const expectedMonth = getExpectedInstallmentMonth(loan, new Date());
+    const expectedMonth = getExpectedInstallmentMonth(loan, getReportReferenceDate());
     if (nextDue.month >= expectedMonth) return 0;
 
     let overdueAmount = 0;
@@ -703,8 +763,8 @@ const ReportsManagement = () => {
     reportData.loanCharges
   ]);
 
-  const getLoanInterestBreakdown = () => {
-    const repaymentsByLoan = filteredLoanRepayments.reduce((acc, repayment) => {
+  const getLoanInterestBreakdown = (loans, repayments) => {
+    const repaymentsByLoan = repayments.reduce((acc, repayment) => {
       const loanId = repayment.loanId?.$id || repayment.loanId;
       if (!loanId) return acc;
       acc[loanId] = acc[loanId] || [];
@@ -715,7 +775,7 @@ const ReportsManagement = () => {
     let interestPaid = 0;
     let interestAccrued = 0;
 
-    filteredLoans.forEach((loan) => {
+    loans.forEach((loan) => {
       const schedule = parseRepaymentPlan(loan);
       const repayments = repaymentsByLoan[loan.$id] || [];
       const paidMonths = new Set(repayments.map(r => parseInt(r.month)));
@@ -735,6 +795,7 @@ const ReportsManagement = () => {
   };
 
   const generateMemberReport = () => {
+    const eligibilityPercent = (Number(financialConfig.loanEligibilityPercentage) || 80) / 100;
     const memberReport = reportData.members.map(member => {
       const memberSavings = hasLedgerData
         ? sumMemberLedger(member.$id, ['Savings'])
@@ -750,10 +811,10 @@ const ReportsManagement = () => {
         phone: member.phone,
         joinDate: member.joinDate,
         totalSavings: memberSavings,
-        loanEligibility: memberSavings * 0.8,
+        loanEligibility: memberSavings * eligibilityPercent,
         activeLoans: activeLoans.length,
         totalLoanAmount: activeBalance,
-        availableCredit: Math.max(0, (memberSavings * 0.8) - activeBalance)
+        availableCredit: Math.max(0, (memberSavings * eligibilityPercent) - activeBalance)
       };
     });
 
@@ -789,7 +850,7 @@ const ReportsManagement = () => {
       (sum, record) => sum + (record.trustInterestTotal || 0),
       0
     );
-    const { interestPaid, interestAccrued } = getLoanInterestBreakdown();
+    const { interestPaid, interestAccrued } = getLoanInterestBreakdown(filteredLoans, filteredLoanRepayments);
 
     const cashAtBank = sumLedgerByTypes(['CashAtBank']);
 
@@ -960,6 +1021,63 @@ const ReportsManagement = () => {
     totalGuarantorRecovered: 0,
     totalGuarantorSecuredOriginal: 0
   });
+
+  const exportNextRepaymentTotalsPdf = () => {
+    if (allMembersPortfolioOverview.length === 0) {
+      toast.error('No next repayment totals available to export.');
+      return;
+    }
+
+    const rows = allMembersPortfolioOverview.map(({ member, overview }) => ([
+      member.name || '',
+      member.membershipNumber || member.$id || '',
+      overview.nextDueMonth || '-',
+      formatCurrency(overview.nextPaymentTotal || 0),
+      formatCurrency(overview.totalOverdueAmount || 0)
+    ]));
+
+    const grandTotal = allMembersPortfolioOverview.reduce(
+      (sum, { overview }) => sum + (overview.nextPaymentTotal || 0),
+      0
+    );
+    const totalOverdue = allMembersPortfolioOverview.reduce(
+      (sum, { overview }) => sum + (overview.totalOverdueAmount || 0),
+      0
+    );
+
+    const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
+      title: 'Next Repayment Totals by Member',
+      subtitle: 'Combined next unpaid installment totals',
+      meta: [
+        `Generated: ${new Date().toLocaleString()}`,
+        `Report Range: ${reportRangeLabel()}`,
+        `Members: ${allMembersPortfolioOverview.length}`,
+        `Grand Next Repayment Total: ${formatCurrency(grandTotal)}`,
+        `Total Overdue Amount: ${formatCurrency(totalOverdue)}`
+      ],
+      watermark: pdfWatermark
+    });
+
+    let cursorY = startY;
+    cursorY = addSectionTitle(doc, cursorY, 'Summary', pdfMeta, 4);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Members Included', value: allMembersPortfolioOverview.length },
+      { label: 'Grand Next Repayment Total', value: formatCurrency(grandTotal) },
+      { label: 'Total Overdue Amount', value: formatCurrency(totalOverdue) }
+    ], pdfMeta);
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Member Totals', pdfMeta, 6);
+    cursorY = addSimpleTable(
+      doc,
+      cursorY,
+      ['Member', 'Membership #', 'Next Due Installment', 'Next Repayment Total', 'Overdue Amount'],
+      rows,
+      pdfMeta
+    );
+
+    savePdf(doc, `next-repayment-totals-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   const getDueStateBadgeClass = (state) => {
     switch (state) {
@@ -1308,9 +1426,79 @@ const ReportsManagement = () => {
   };
 
   const exportAgmSummaryPdf = () => {
+    const snapshotDate = getSnapshotDate();
+    const unitTrustBeforeStart = reportData.unitTrust.filter((record) => isBeforeStart(record?.createdAt));
+    const unitTrustRangeTotals = sumUnitTrustByType(filteredUnitTrust);
+    const unitTrustBeforeTotals = sumUnitTrustByType(unitTrustBeforeStart);
+
+    const openingTrustBalance =
+      unitTrustBeforeTotals.purchase +
+      unitTrustBeforeTotals.interest -
+      unitTrustBeforeTotals.withdrawal;
+    const closingTrustBalance =
+      openingTrustBalance +
+      unitTrustRangeTotals.purchase +
+      unitTrustRangeTotals.interest -
+      unitTrustRangeTotals.withdrawal;
+
+    const totalSavingsToDate = hasLedgerData
+      ? reportData.ledger
+          .filter((entry) => entry.type === 'Savings' && isOnOrBeforeSnapshot(entry.createdAt))
+          .reduce((sum, entry) => sum + (entry.amount || 0), 0)
+      : reportData.savings
+          .filter((saving) => isOnOrBeforeSnapshot(saving.createdAt))
+          .reduce((sum, saving) => sum + (saving.amount || 0), 0);
+
+    const totalSavingsInRange = hasLedgerData
+      ? sumLedgerByTypes(['Savings'])
+      : filteredSavings.reduce((sum, saving) => sum + (saving.amount || 0), 0);
+    const totalSubscriptionsInRange = hasLedgerData
+      ? sumLedgerByTypes(['Subscription'])
+      : filteredSubscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
+    const totalExpensesInRange = hasLedgerData
+      ? sumLedgerByTypes(['Expense'])
+      : filteredExpenses.reduce((sum, record) => sum + (record.amount || 0), 0);
+    const totalTransferChargesInRange = hasLedgerData
+      ? sumLedgerByTypes(['TransferCharge'])
+      : filteredLoanCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0);
+    const totalLoanRepaymentsInRange = hasLedgerData
+      ? sumLedgerByTypes(['LoanRepayment'])
+      : filteredLoanRepayments.reduce((sum, repayment) => sum + (repayment.amount || 0), 0);
+    const totalLoansDisbursedInRange = hasLedgerData
+      ? sumLedgerByTypes(['LoanDisbursement'])
+      : filteredLoans
+          .filter((loan) => ['active', 'approved', 'completed'].includes(loan.status))
+          .reduce((sum, loan) => sum + (loan.amount || 0), 0);
+
+    const { interestPaid: loanInterestPaid } = getLoanInterestBreakdown(reportData.loans, filteredLoanRepayments);
+    const totalInterestPayoutsInRange = sumLedgerByTypes(['InterestPayout']);
+
+    const loansReceivable = reportData.loans
+      .filter((loan) => isOnOrBeforeSnapshot(loan?.createdAt || loan?.$createdAt))
+      .filter((loan) => ['active', 'approved'].includes(loan.status))
+      .reduce((sum, loan) => sum + (parseInt(loan.balance, 10) || parseInt(loan.amount, 10) || 0), 0);
+
+    const cashAtBankSnapshot = hasLedgerData
+      ? reportData.ledger
+          .filter((entry) => entry.type === 'CashAtBank' && isOnOrBeforeSnapshot(entry.createdAt))
+          .reduce((sum, entry) => sum + (entry.amount || 0), 0)
+      : 0;
+
+    const totalAssets = closingTrustBalance + loansReceivable + cashAtBankSnapshot;
+    const totalLiabilities = totalSavingsToDate;
+    const netPosition = totalAssets - totalLiabilities;
+
+    const totalIncome =
+      totalSubscriptionsInRange +
+      loanInterestPaid +
+      unitTrustRangeTotals.interest +
+      totalTransferChargesInRange;
+    const totalExpenses = totalExpensesInRange + totalInterestPayoutsInRange;
+    const netIncome = totalIncome - totalExpenses;
+
     const meta = [
       `Generated: ${new Date().toLocaleString()}`,
-      `Total Members: ${financialSummary.totalMembers}`,
+      `Total Members: ${reportData.members.length}`,
       `Report Range: ${reportRangeLabel()}`
     ];
     const { doc, cursorY: startY, meta: pdfMeta } = createPdfDoc({
@@ -1321,69 +1509,65 @@ const ReportsManagement = () => {
     });
 
     let cursorY = startY;
-    const totalAssets =
-      financialSummary.cashAtBank +
-      financialSummary.portfolioValue +
-      financialSummary.loanInterestAccrued;
-    const totalLiabilities = financialSummary.totalSavings;
-    const totalEquity = totalAssets - totalLiabilities;
-
-    cursorY = addSectionTitle(doc, cursorY, 'Balance Sheet (Statement of Financial Position)', pdfMeta);
+    cursorY = addSectionTitle(doc, cursorY, 'Statement of Financial Position (Snapshot)', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Assets - Cash at Bank (Manual)', value: formatCurrency(financialSummary.cashAtBank) },
-      { label: 'Assets - Loans Receivable', value: formatCurrency(financialSummary.portfolioValue) },
-      { label: 'Assets - Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) },
+      { label: 'Assets - Trust Balance (Invested Funds)', value: formatCurrency(closingTrustBalance) },
+      { label: 'Assets - Loans Receivable (Outstanding Principal)', value: formatCurrency(loansReceivable) },
+      { label: 'Assets - Cash at Bank', value: formatCurrency(cashAtBankSnapshot) },
       { label: 'Total Assets', value: formatCurrency(totalAssets) },
-      { label: 'Liabilities - Member Savings/Deposits', value: formatCurrency(totalLiabilities) },
+      { label: 'Liabilities - Member Savings / Deposits', value: formatCurrency(totalLiabilities) },
       { label: 'Total Liabilities', value: formatCurrency(totalLiabilities) },
-      { label: 'Equity - Retained Earnings / Unreconciled Difference', value: formatCurrency(totalEquity) },
-      { label: 'Total Equity', value: formatCurrency(totalEquity) }
+      { label: 'Net Position (Assets - Liabilities)', value: formatCurrency(netPosition) }
     ], pdfMeta);
 
-    const totalIncome =
-      financialSummary.totalSubscriptions +
-      financialSummary.loanInterestPaid +
-      financialSummary.trustInterestEarned +
-      financialSummary.totalTransferCharges;
-    const totalExpenses =
-      financialSummary.totalUnitTrust +
-      financialSummary.totalExpenses +
-      financialSummary.totalInterestPayouts;
-    const netIncome = totalIncome - totalExpenses;
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Unit Trust Activity (Rollforward)', pdfMeta);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Opening Trust Balance', value: formatCurrency(openingTrustBalance) },
+      { label: 'Total Invested to Trust', value: formatCurrency(unitTrustRangeTotals.purchase) },
+      { label: 'Trust Interest Earned', value: formatCurrency(unitTrustRangeTotals.interest) },
+      { label: 'Total Withdrawals from Trust', value: formatCurrency(unitTrustRangeTotals.withdrawal) },
+      { label: 'Closing Trust Balance', value: formatCurrency(closingTrustBalance) }
+    ], pdfMeta);
 
     cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Statement of Income & Expenditure)', pdfMeta);
+    cursorY = addSectionTitle(doc, cursorY, 'Loan Portfolio Summary', pdfMeta);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Loans Disbursed', value: formatCurrency(totalLoansDisbursedInRange) },
+      { label: 'Total Loan Repayments (Cash In)', value: formatCurrency(totalLoanRepaymentsInRange) },
+      { label: 'Loan Interest Earned', value: formatCurrency(loanInterestPaid) },
+      { label: 'Bank/Transfer Charges Earned', value: formatCurrency(totalTransferChargesInRange) },
+      { label: 'Outstanding Loan Balance (Principal)', value: formatCurrency(loansReceivable) }
+    ], pdfMeta);
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Member Contributions & Club Expenses', pdfMeta);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Total Member Savings', value: formatCurrency(totalSavingsInRange) },
+      { label: 'Total Subscriptions', value: formatCurrency(totalSubscriptionsInRange) },
+      { label: 'Total Interest Paid to Members', value: formatCurrency(totalInterestPayoutsInRange) },
+      { label: 'Total Club Expenses', value: formatCurrency(totalExpensesInRange) }
+    ], pdfMeta);
+
+    cursorY += 4;
+    cursorY = addSectionTitle(doc, cursorY, 'Income Statement (Operational Performance)', pdfMeta);
     cursorY = addSimpleTable(
       doc,
       cursorY,
       ['Category', 'Amount'],
       [
-        ['Income - Subscriptions', formatCurrency(financialSummary.totalSubscriptions)],
-        ['Income - Loan Interest Paid', formatCurrency(financialSummary.loanInterestPaid)],
-        ['Income - Trust Interest Earned', formatCurrency(financialSummary.trustInterestEarned)],
-        ['Income - Transfer Charges', formatCurrency(financialSummary.totalTransferCharges)],
+        ['Income - Loan Interest', formatCurrency(loanInterestPaid)],
+        ['Income - Transfer / Bank Charges', formatCurrency(totalTransferChargesInRange)],
+        ['Income - Trust Interest', formatCurrency(unitTrustRangeTotals.interest)],
+        ['Income - Subscriptions', formatCurrency(totalSubscriptionsInRange)],
         ['Total Income', formatCurrency(totalIncome)],
-        ['Expense - Unit Trust', formatCurrency(financialSummary.totalUnitTrust)],
-        ['Expense - Other Expenses', formatCurrency(financialSummary.totalExpenses)],
-        ['Expense - Interest Payouts', formatCurrency(financialSummary.totalInterestPayouts)],
+        ['Expense - Club Expenses', formatCurrency(totalExpensesInRange)],
+        ['Expense - Interest Paid to Members', formatCurrency(totalInterestPayoutsInRange)],
         ['Total Expenses', formatCurrency(totalExpenses)],
         ['Net Income', formatCurrency(netIncome)]
       ],
       pdfMeta
     );
-
-    cursorY += 4;
-    cursorY = addSectionTitle(doc, cursorY, 'Notes & Schedules - Loan Portfolio Summary', pdfMeta);
-    cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Total Disbursed', value: formatCurrency(financialSummary.totalLoansDisbursed) },
-      { label: 'Total Repaid', value: formatCurrency(financialSummary.totalLoanRepayments) },
-      { label: 'Outstanding Balance', value: formatCurrency(financialSummary.portfolioValue) },
-      { label: 'Accrued Interest (Loans)', value: formatCurrency(financialSummary.loanInterestAccrued) },
-      { label: 'Guarantor Secured Total', value: formatCurrency(guarantorSettlementTotals.totalSecuredOriginal) },
-      { label: 'Guarantor Recovered', value: formatCurrency(guarantorSettlementTotals.totalRecovered) },
-      { label: 'Guarantor Outstanding', value: formatCurrency(guarantorSettlementTotals.totalOutstanding) },
-      { label: 'Guarantor Settlement Progress', value: `${guarantorSettlementTotals.settlementPercent}%` }
-    ], pdfMeta);
 
     savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -1899,12 +2083,14 @@ const ReportsManagement = () => {
       </div>
 
       <section className="card">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Report Date Range</h2>
-            <p className="text-sm text-slate-500">Applies to summaries and all exports.</p>
+            <p className="text-xs text-slate-500 max-w-md">
+              Applies to summaries and exports. Due/overdue uses the end date when set.
+            </p>
           </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
             <div>
               <label className="block text-sm font-medium text-slate-600 mb-1">Start date</label>
               <input
@@ -1925,7 +2111,7 @@ const ReportsManagement = () => {
             </div>
             <button
               type="button"
-              className="btn-secondary h-11 mt-6"
+              className="btn-secondary h-11 md:mt-0"
               onClick={() => {
                 setReportStartDate('');
                 setReportEndDate('');
@@ -1942,30 +2128,30 @@ const ReportsManagement = () => {
           <h2 className="text-lg font-semibold text-slate-900">Snapshot</h2>
           <p className="text-sm text-slate-500">High-level position from the ledger.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Total Members</div>
-            <div className="text-2xl font-bold text-blue-600">{financialSummary.totalMembers}</div>
+            <div className="text-xl font-bold text-blue-600 break-words leading-tight">{financialSummary.totalMembers}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Total Savings (Ledger)</div>
-            <div className="text-2xl font-bold text-green-600">{formatCurrency(financialSummary.totalSavings)}</div>
+            <div className="text-xl font-bold text-green-600 break-words leading-tight">{formatCurrency(financialSummary.totalSavings)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Active Loans (Balance)</div>
-            <div className="text-2xl font-bold text-yellow-600">{formatCurrency(financialSummary.portfolioValue)}</div>
+            <div className="text-xl font-bold text-yellow-600 break-words leading-tight">{formatCurrency(financialSummary.portfolioValue)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Cash at Bank (Net)</div>
-            <div className="text-2xl font-bold text-purple-600">{formatCurrency(financialSummary.cashAtBank)}</div>
+            <div className="text-xl font-bold text-purple-600 break-words leading-tight">{formatCurrency(financialSummary.cashAtBank)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Guarantor Secured Outstanding</div>
-            <div className="text-2xl font-bold text-blue-600">{formatCurrency(guarantorSettlementTotals.totalOutstanding || 0)}</div>
+            <div className="text-xl font-bold text-blue-600 break-words leading-tight">{formatCurrency(guarantorSettlementTotals.totalOutstanding || 0)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Guarantor Settlement Progress</div>
-            <div className="text-2xl font-bold text-blue-600">{guarantorSettlementTotals.settlementPercent || 0}%</div>
+            <div className="text-xl font-bold text-blue-600 break-words leading-tight">{guarantorSettlementTotals.settlementPercent || 0}%</div>
           </div>
         </div>
       </section>
@@ -1978,39 +2164,39 @@ const ReportsManagement = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Loan Disbursements</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalLoansDisbursed)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalLoansDisbursed)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Loan Repayments</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalLoanRepayments)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalLoanRepayments)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Subscriptions</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalSubscriptions)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalSubscriptions)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Unit Trust</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalUnitTrust)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalUnitTrust)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Expenses</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalExpenses)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalExpenses)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Transfer Charges</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.totalTransferCharges)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.totalTransferCharges)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Interest Paid (Loans)</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.loanInterestPaid)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.loanInterestPaid)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Accrued Interest (Loans)</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.loanInterestAccrued)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.loanInterestAccrued)}</div>
           </div>
           <div className="card">
             <div className="text-sm font-medium text-gray-500">Trust Interest Earned</div>
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(financialSummary.trustInterestEarned)}</div>
+            <div className="text-xl font-bold text-gray-900 break-words leading-tight">{formatCurrency(financialSummary.trustInterestEarned)}</div>
           </div>
         </div>
       </section>
@@ -2026,49 +2212,49 @@ const ReportsManagement = () => {
           <div className="space-y-4">
             <button
               onClick={exportAgmSummaryPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export AGM Summary (PDF)
             </button>
             <button
               onClick={exportCashAtBankPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Cash at Bank (PDF)
             </button>
             <button
               onClick={exportLoanPortfolioPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-amber-700 text-white rounded-lg hover:bg-amber-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-amber-700 text-white rounded-lg hover:bg-amber-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Loan Portfolio (PDF)
             </button>
             <button
               onClick={exportMemberSavingsPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Member Savings (PDF)
             </button>
             <button
               onClick={exportInterestDistributionPdf}
-              className="w-full flex items-center justify-center px-4 py-2 bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Interest Distribution (PDF)
             </button>
             <button
               onClick={() => exportToCSV(memberReport, 'member-report')}
-              className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Member Report (CSV)
             </button>
             <button
               onClick={() => exportToCSV(filteredLedger, 'ledger-entries')}
-              className="w-full flex items-center justify-center px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Ledger Entries (CSV)
@@ -2081,7 +2267,7 @@ const ReportsManagement = () => {
           <div className="space-y-4">
             <button
               onClick={() => exportToCSV(getLedgerRows('Savings'), 'savings-ledger')}
-              className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Savings (CSV)
@@ -2101,14 +2287,14 @@ const ReportsManagement = () => {
                 ),
                 'loans-disbursed'
               )}
-              className="w-full flex items-center justify-center px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Loan Disbursements (CSV)
             </button>
             <button
               onClick={exportGuarantorSettlementCsv}
-              className="w-full flex items-center justify-center px-4 py-2 bg-sky-700 text-white rounded-lg hover:bg-sky-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-sky-700 text-white rounded-lg hover:bg-sky-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Guarantor Settlement (CSV)
@@ -2124,7 +2310,7 @@ const ReportsManagement = () => {
                 })),
                 'transfer-charges'
               )}
-              className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Transfer Charges (CSV)
@@ -2139,14 +2325,14 @@ const ReportsManagement = () => {
                 })),
                 'cash-at-bank'
               )}
-              className="w-full flex items-center justify-center px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Cash at Bank (CSV)
             </button>
             <button
               onClick={() => exportToCSV(getLedgerRows('Expense'), 'expenses-ledger')}
-              className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              className="w-full flex items-center justify-center h-11 px-4 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
             >
               <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
               Export Expenses (CSV)
@@ -2202,7 +2388,17 @@ const ReportsManagement = () => {
       </div>
 
       <div className="card mb-8">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">All Members Next Payment Summary</h3>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+          <h3 className="text-lg font-medium text-gray-900">All Members Next Payment Summary</h3>
+          <button
+            type="button"
+            onClick={exportNextRepaymentTotalsPdf}
+            className="btn-secondary"
+            disabled={allMembersPortfolioOverview.length === 0}
+          >
+            Export Next Repayment Totals (PDF)
+          </button>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-5">
           <div className="card">
             <div className="text-xs font-medium text-gray-500">Members With Overdue Loans</div>

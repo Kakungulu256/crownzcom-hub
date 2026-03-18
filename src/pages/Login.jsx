@@ -3,9 +3,13 @@ import { useAuth } from '../lib/auth';
 import toast from 'react-hot-toast';
 
 const Login = () => {
-  const [loading, setLoading] = useState(false);
-  const { loginWithGoogle, authError, clearAuthError } = useAuth();
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
+  const [loadingEmail, setLoadingEmail] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const { login, loginWithGoogle, authError, clearAuthError } = useAuth();
   const requireMemberProfile = import.meta.env.VITE_REQUIRE_MEMBER_PROFILE === 'true';
+  const enableEmailLogin = import.meta.env.VITE_ENABLE_EMAIL_LOGIN === 'true';
 
   useEffect(() => {
     if (authError) {
@@ -15,14 +19,30 @@ const Login = () => {
   }, [authError, clearAuthError]);
 
   const onGoogleSignIn = async () => {
-    setLoading(true);
+    setLoadingGoogle(true);
     try {
       await loginWithGoogle();
     } catch (error) {
       toast.error(error.message || 'Google sign-in failed');
-      setLoading(false);
+      setLoadingGoogle(false);
     } finally {
       // OAuth redirects away on success.
+    }
+  };
+
+  const onEmailSignIn = async (event) => {
+    event.preventDefault();
+    if (!email || !password) {
+      toast.error('Email and password are required');
+      return;
+    }
+    setLoadingEmail(true);
+    try {
+      await login(email, password);
+    } catch (error) {
+      toast.error(error.message || 'Email sign-in failed');
+    } finally {
+      setLoadingEmail(false);
     }
   };
 
@@ -42,14 +62,65 @@ const Login = () => {
             </p>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {enableEmailLogin && (
+              <>
+                <form onSubmit={onEmailSignIn} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-2">Email</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-2">Password</label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      placeholder="Enter password"
+                      autoComplete="current-password"
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={loadingEmail}
+                    className="w-full inline-flex items-center justify-center rounded-lg bg-[#0B1220] px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#111a2e] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loadingEmail ? (
+                      <div className="flex items-center justify-center">
+                        <div className="mr-2 h-5 w-5 animate-spin rounded-full border-b-2 border-white"></div>
+                        Signing in...
+                      </div>
+                    ) : (
+                      'Sign in with Email'
+                    )}
+                  </button>
+                </form>
+
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-200"></div>
+                  <span className="text-xs text-gray-400">OR</span>
+                  <div className="h-px flex-1 bg-gray-200"></div>
+                </div>
+              </>
+            )}
+
             <button
               type="button"
               onClick={onGoogleSignIn}
-              disabled={loading}
+              disabled={loadingGoogle}
               className="w-full inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? (
+              {loadingGoogle ? (
                 <div className="flex items-center justify-center">
                   <div className="mr-2 h-5 w-5 animate-spin rounded-full border-b-2 border-gray-700"></div>
                   Signing in...

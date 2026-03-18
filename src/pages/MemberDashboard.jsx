@@ -132,9 +132,11 @@ const MemberDashboard = () => {
                 <div className="app-subtitle">Member / {pageTitle()}</div>
                 <div className="app-title">{pageTitle()}</div>
               </div>
-              <Link to="/member" className="text-sm font-semibold text-emerald-600 hover:text-emerald-800">
-                Back to Overview
-              </Link>
+              {location.pathname !== '/member' && (
+                <Link to="/member" className="text-sm font-semibold text-emerald-600 hover:text-emerald-800">
+                  Back to Overview
+                </Link>
+              )}
             </div>
           </div>
           <main className="p-8">

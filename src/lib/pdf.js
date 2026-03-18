@@ -141,6 +141,9 @@ export const addSimpleTable = (doc, cursorY, columns, rows, meta) => {
   const columnWidth = (doc.internal.pageSize.getWidth() - DEFAULT_MARGIN * 2) / columns.length;
   const numericColumns = columns.map(col => NUMERIC_COLUMN_PATTERN.test(String(col || '')));
 
+  const tableTitle = meta?.tableTitle || null;
+  const showTitleOnFirst = meta?.tableTitleShowOnFirst !== false;
+  let headerCount = 0;
   const lineStep = LINE_HEIGHT - 1;
   const cellPaddingX = 1.5;
   const cellPaddingY = 1.5;
@@ -175,7 +178,23 @@ export const addSimpleTable = (doc, cursorY, columns, rows, meta) => {
   const headerHeight = getBlockHeight(headerLines);
 
   const drawHeader = () => {
-    const headerTop = cursorY - 4;
+    headerCount += 1;
+    const showTitle = tableTitle && (showTitleOnFirst || headerCount > 1);
+    let headerTop = cursorY - 4;
+    if (showTitle) {
+      let titleY = headerTop - 6;
+      const minTitleY = DEFAULT_MARGIN + (meta?.title || meta?.subtitle ? 12 : 6);
+      if (titleY < minTitleY) {
+        cursorY += 10;
+        headerTop = cursorY - 4;
+        titleY = headerTop - 6;
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(90);
+      doc.text(tableTitle, DEFAULT_MARGIN, titleY);
+      doc.setTextColor(20);
+    }
     doc.setFontSize(9);
     doc.setFillColor(242, 244, 247);
     doc.rect(DEFAULT_MARGIN, headerTop, columnWidth * columns.length, headerHeight, 'F');

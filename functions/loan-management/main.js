@@ -4,9 +4,10 @@ const { allocateProRataByOutstanding } = require('./waterfall');
 const {
   INTEREST_CALCULATION_MODES,
   normalizeInterestCalculationMode,
+  generateRepaymentSchedule,
   calculateScheduledInterest,
   calculateEarlyPayoffInterest
-} = require('../shared/loan-calculations');
+} = require('./loan-calculations');
 
 const client = new Client()
   .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT)
@@ -21,6 +22,7 @@ const COLLECTIONS = {
   LOAN_CHARGES: process.env.LOAN_CHARGES_COLLECTION_ID,
   LOAN_REPAYMENTS: process.env.LOAN_REPAYMENTS_COLLECTION_ID,
   LOAN_GUARANTORS: process.env.LOAN_GUARANTORS_COLLECTION_ID,
+  LOAN_EARLY_REPAYMENTS: process.env.LOAN_EARLY_REPAYMENTS_COLLECTION_ID,
   SAVINGS: process.env.SAVINGS_COLLECTION_ID,
   FINANCIAL_CONFIG: process.env.FINANCIAL_CONFIG_COLLECTION_ID,
   LEDGER_ENTRIES: process.env.LEDGER_ENTRIES_COLLECTION_ID
@@ -83,6 +85,83 @@ async function listAllDocuments(collectionId, queries = []) {
   return all;
 }
 
+function parseRepaymentPlan(loan) {
+  if (!loan?.repaymentPlan) return [];
+  try {
+    const parsed = JSON.parse(loan.repaymentPlan);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getInstallmentMonthNumber(loan, requestedForDate, scheduleLength = 0) {
+  if (!requestedForDate) return null;
+  const start = new Date(loan.disbursedAt || loan.approvedAt || loan.createdAt || loan.$createdAt || 0);
+  const target = new Date(requestedForDate);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(target.getTime())) {
+    return null;
+  }
+  const monthDiff =
+    (target.getFullYear() - start.getFullYear()) * 12 +
+    (target.getMonth() - start.getMonth());
+  const monthNumber = monthDiff + 1;
+  if (scheduleLength > 0) {
+    return Math.max(1, Math.min(scheduleLength, monthNumber));
+  }
+  return Math.max(1, monthNumber);
+}
+
+function getOpeningBalanceForMonth(schedule, monthNumber, fallbackAmount) {
+  const month = toInteger(monthNumber, 0);
+  if (month <= 1) return toInteger(fallbackAmount, 0);
+  const previous = schedule.find((row) => toInteger(row?.month, 0) === month - 1);
+  if (previous && previous.balance !== undefined && previous.balance !== null) {
+    return Math.max(0, toInteger(previous.balance, fallbackAmount));
+  }
+  return Math.max(0, toInteger(fallbackAmount, 0));
+}
+
+async function listLoanRepayments(loanId) {
+  return listAllDocuments(
+    COLLECTIONS.LOAN_REPAYMENTS,
+    [Query.equal('loanId', loanId)]
+  );
+}
+
+async function getLoanChargeTotal(loanId) {
+  const charges = await listAllDocuments(
+    COLLECTIONS.LOAN_CHARGES,
+    [Query.equal('loanId', loanId)]
+  );
+  return charges.reduce((sum, charge) => sum + toInteger(charge.amount, 0), 0);
+}
+
+function getNextUnpaidMonth(plan, repayments) {
+  const schedule = Array.isArray(plan) ? plan : [];
+  if (schedule.length === 0) return null;
+  const paidMonths = new Set(
+    repayments.map((repayment) => toInteger(repayment.month, 0)).filter((month) => month > 0)
+  );
+  const ordered = schedule
+    .slice()
+    .sort((a, b) => toInteger(a.month, 0) - toInteger(b.month, 0));
+
+  for (const item of ordered) {
+    const month = toInteger(item.month, 0);
+    if (month > 0 && !paidMonths.has(month)) {
+      return month;
+    }
+  }
+  return null;
+}
+
+function hasRepaymentForMonth(repayments, monthNumber) {
+  const target = toInteger(monthNumber, 0);
+  if (target <= 0) return false;
+  return repayments.some((repayment) => toInteger(repayment.month, 0) === target);
+}
+
 function getLoanMonthlyRate(loan, config) {
   const storedPercent = toFloat(loan.monthlyInterestRateApplied, NaN);
   if (Number.isFinite(storedPercent) && storedPercent >= 0) {
@@ -103,6 +182,38 @@ function getLoanCalculationContext(loan, config) {
   };
 }
 
+async function buildEarlyPayoffQuote({ loan, config, monthNumber, schedule }) {
+  const currentBalance = Math.max(0, toInteger(loan.balance ?? loan.amount, 0));
+  const plan = Array.isArray(schedule) ? schedule : parseRepaymentPlan(loan);
+  const openingBalance = getOpeningBalanceForMonth(plan, monthNumber, currentBalance);
+  const principalOutstanding = Math.min(currentBalance, openingBalance || currentBalance);
+  const { mode: interestCalculationMode, monthlyRate } = getLoanCalculationContext(loan, config);
+  const earlyPenaltyRate = toFloat(config.earlyRepaymentPenalty, 1) / 100;
+  const repayments = await listLoanRepayments(loan.$id);
+  const hasFirstMonthRepayment = repayments.some((repayment) => toInteger(repayment.month, 0) === 1);
+  const bankCharge = await getLoanChargeTotal(loan.$id);
+  const chargeAmount = toInteger(monthNumber, 0) === 1 && !hasFirstMonthRepayment ? bankCharge : 0;
+
+  const interestBase = interestCalculationMode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
+    ? principalOutstanding
+    : Math.max(0, toInteger(loan.amount, principalOutstanding));
+  const regularInterest = Math.ceil(interestBase * monthlyRate);
+  const penaltyInterest = Math.ceil(interestBase * earlyPenaltyRate);
+  const totalInterest = regularInterest + penaltyInterest;
+  const paymentAmount = Math.ceil(principalOutstanding + totalInterest + chargeAmount);
+
+  return {
+    paymentAmount,
+    principalPaid: principalOutstanding,
+    interestPaid: totalInterest,
+    chargeAmount,
+    interestCalculationMode,
+    monthlyRatePercent: Number((monthlyRate * 100).toFixed(6)),
+    penaltyRatePercent: Number((earlyPenaltyRate * 100).toFixed(6)),
+    currentBalance: principalOutstanding
+  };
+}
+
 const DEFAULT_FINANCIAL_CONFIG = {
   loanInterestRate: 2,
   longTermInterestRate: 1.5,
@@ -115,6 +226,8 @@ const DEFAULT_FINANCIAL_CONFIG = {
   minLoanAmount: 10000,
   maxLoanAmount: 5000000
 };
+
+const REPAYMENT_PLAN_VERSION = 2;
 
 const parseBody = (body) => {
   if (!body) return {};
@@ -149,6 +262,41 @@ async function getFinancialConfig() {
   }
 }
 
+function normalizeLoanType(value) {
+  return value === 'long_term' ? 'long_term' : 'short_term';
+}
+
+function buildRepaymentPlanAudit({
+  loanType,
+  repaymentType,
+  principal,
+  months,
+  monthlyRate,
+  interestCalculationMode,
+  hasCustomPayments,
+  generatedAt
+}) {
+  const mode = normalizeInterestCalculationMode(interestCalculationMode);
+  const monthlyRatePercent = Number((monthlyRate * 100).toFixed(6));
+
+  return {
+    interestCalculationModeApplied: mode,
+    monthlyInterestRateApplied: monthlyRatePercent,
+    repaymentPlanVersion: REPAYMENT_PLAN_VERSION,
+    repaymentPlanGeneratedAt: generatedAt || new Date().toISOString(),
+    repaymentPlanBasis: JSON.stringify({
+      loanType,
+      repaymentType,
+      principal: toInteger(principal, 0),
+      months: toInteger(months, 0),
+      monthlyRatePercent,
+      interestCalculationMode: mode,
+      hasCustomPayments: Boolean(hasCustomPayments),
+      generatedBy: 'loan-management-update'
+    })
+  };
+}
+
 module.exports = async ({ req, res, log, error }) => {
   try {
     const { action, ...data } = parseBody(req.body);
@@ -166,6 +314,16 @@ module.exports = async ({ req, res, log, error }) => {
         return res.json(await deleteLoanCharge(data.chargeId));
       case 'recordRepayment':
         return res.json(await recordRepayment(data.loanId, data.amount, data.month, data.isEarlyPayment, data.paidAt));
+      case 'requestEarlyRepayment':
+        return res.json(await requestEarlyRepayment(data.loanId, data.memberId, data.requestedForDate));
+      case 'cancelEarlyRepaymentRequest':
+        return res.json(await cancelEarlyRepaymentRequest(data.requestId, data.memberId));
+      case 'markEarlyRepaymentPaid':
+        return res.json(await markEarlyRepaymentPaid(data.requestId, data.paidAt));
+      case 'updateLoanDetails':
+        return res.json(await updateLoanDetails(data.loanId, data.updates));
+      case 'deleteLoan':
+        return res.json(await deleteLoan(data.loanId));
       case 'validateLoanApplication':
         return res.json(await validateLoanApplication(data.loanId));
       default:
@@ -329,18 +487,15 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
   const earlyPenaltyRate = toFloat(config.earlyRepaymentPenalty, 1) / 100;
 
   if (isEarlyPayment) {
-    const interestBreakdown = calculateEarlyPayoffInterest({
-      loanAmount: loan.amount,
-      currentBalance,
-      monthlyRate,
-      earlyPenaltyRate,
-      interestCalculationMode
+    const quote = await buildEarlyPayoffQuote({
+      loan,
+      config,
+      monthNumber,
+      schedule: repaymentPlan
     });
-    const interestAmount = interestBreakdown.totalInterest;
-    const chargeAmount = monthNumber === 1 && !hasFirstMonthRepayment ? bankCharge : 0;
-    paymentAmount = Math.ceil(currentBalance + interestAmount + chargeAmount);
-    principalPaid = currentBalance;
-    interestPaid = interestAmount;
+    paymentAmount = quote.paymentAmount;
+    principalPaid = quote.principalPaid;
+    interestPaid = quote.interestPaid;
   } else {
     const scheduledPayment = toInteger(planItem.payment ?? planItem.amount, 0);
     const scheduledInterest = calculateScheduledInterest({
@@ -466,6 +621,7 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
   return { 
     success: true, 
     message: 'Repayment recorded successfully',
+    paymentAmount: paymentAmount,
     newBalance: newBalance,
     status: status,
     allocation: {
@@ -479,6 +635,318 @@ async function recordRepayment(loanId, amount, month, isEarlyPayment = false, pa
       monthlyRateApplied: Number((monthlyRate * 100).toFixed(6))
     }
   };
+}
+
+async function requestEarlyRepayment(loanId, memberId, requestedForDate = null) {
+  if (!COLLECTIONS.LOAN_EARLY_REPAYMENTS) {
+    throw new Error('Early repayment requests collection is not configured.');
+  }
+  const loan = await databases.getDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId);
+  if (loan.status !== 'active') {
+    throw new Error('Early repayment requests are only allowed for active loans.');
+  }
+
+  const borrowerId = normalizeMemberId(loan.memberId);
+  const requesterId = normalizeMemberId(memberId);
+  if (requesterId && borrowerId && requesterId !== borrowerId) {
+    throw new Error('Early repayment request does not match the borrower.');
+  }
+
+  const existing = await databases.listDocuments(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    [Query.equal('loanId', loanId), Query.equal('status', 'pending'), Query.limit(1)]
+  );
+  if (existing.documents.length > 0) {
+    throw new Error('There is already a pending early repayment request for this loan.');
+  }
+
+  const repayments = await listLoanRepayments(loanId);
+  const plan = parseRepaymentPlan(loan);
+  const monthNumber = getNextUnpaidMonth(plan, repayments);
+  if (!monthNumber) {
+    throw new Error('No unpaid installment found for early repayment.');
+  }
+
+  const config = await getFinancialConfig();
+  const quote = await buildEarlyPayoffQuote({ loan, config, monthNumber, schedule: plan });
+  const nowIso = new Date().toISOString();
+  const requestedForIso = requestedForDate ? new Date(requestedForDate).toISOString() : null;
+
+  const payload = {
+    loanId,
+    memberId: borrowerId,
+    status: 'pending',
+    month: monthNumber,
+    amount: quote.paymentAmount,
+    interestCalculationModeApplied: quote.interestCalculationMode,
+    monthlyInterestRateApplied: quote.monthlyRatePercent,
+    penaltyRateApplied: quote.penaltyRatePercent,
+    interestAmount: quote.interestPaid,
+    principalAmount: quote.principalPaid,
+    chargeAmount: quote.chargeAmount,
+    balanceAtRequest: quote.currentBalance,
+    requestedAt: nowIso,
+    requestedForDate: requestedForIso
+  };
+
+  const created = await databases.createDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    sdk.ID.unique(),
+    payload
+  );
+
+  return {
+    success: true,
+    requestId: created.$id,
+    amount: quote.paymentAmount,
+    month: monthNumber
+  };
+}
+
+async function markEarlyRepaymentPaid(requestId, paidAt = null) {
+  if (!COLLECTIONS.LOAN_EARLY_REPAYMENTS) {
+    throw new Error('Early repayment requests collection is not configured.');
+  }
+
+  const request = await databases.getDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    requestId
+  );
+
+  if (request.status !== 'pending') {
+    throw new Error('This early repayment request has already been processed.');
+  }
+
+  const loanId = request.loanId?.$id || request.loanId;
+  if (!loanId) {
+    throw new Error('Early repayment request has no loan reference.');
+  }
+
+  const loan = await databases.getDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId);
+  if (loan.status !== 'active') {
+    throw new Error('Loan is not active.');
+  }
+
+  const repayments = await listLoanRepayments(loanId);
+  const monthNumber = toInteger(request.month, 0) || getNextUnpaidMonth(parseRepaymentPlan(loan), repayments);
+  if (!monthNumber) {
+    throw new Error('No unpaid installment found for this loan.');
+  }
+
+  if (hasRepaymentForMonth(repayments, monthNumber)) {
+    await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+      requestId,
+      {
+        status: 'void',
+        resolvedAt: new Date().toISOString(),
+        adminComment: 'Repayment already recorded for this month.'
+      }
+    );
+    throw new Error('Repayment already recorded for this installment.');
+  }
+
+  const paidIso = paidAt
+    ? new Date(paidAt).toISOString()
+    : (request.requestedForDate ? new Date(request.requestedForDate).toISOString() : new Date().toISOString());
+  const repaymentResult = await recordRepayment(loanId, null, monthNumber, true, paidIso);
+
+  await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    requestId,
+    {
+      status: 'paid',
+      paidAt: paidIso,
+      resolvedAt: new Date().toISOString(),
+      amount: repaymentResult.paymentAmount || request.amount
+    }
+  );
+
+  return {
+    success: true,
+    requestId,
+    loanId,
+    paidAt: paidIso,
+    paymentAmount: repaymentResult.paymentAmount
+  };
+}
+
+async function cancelEarlyRepaymentRequest(requestId, memberId) {
+  if (!COLLECTIONS.LOAN_EARLY_REPAYMENTS) {
+    throw new Error('Early repayment requests collection is not configured.');
+  }
+
+  const request = await databases.getDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    requestId
+  );
+
+  if (request.status !== 'pending') {
+    throw new Error('Only pending early repayment requests can be cancelled.');
+  }
+
+  const requesterId = normalizeMemberId(memberId);
+  const requestMemberId = normalizeMemberId(request.memberId);
+  if (requesterId && requestMemberId && requesterId !== requestMemberId) {
+    throw new Error('You are not allowed to cancel this request.');
+  }
+
+  await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+    requestId,
+    {
+      status: 'cancelled',
+      resolvedAt: new Date().toISOString(),
+      adminComment: 'Cancelled by member'
+    }
+  );
+
+  return { success: true, requestId };
+}
+
+async function updateLoanDetails(loanId, updates = {}) {
+  if (!loanId) {
+    throw new Error('Loan ID is required.');
+  }
+
+  const loan = await databases.getDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId);
+  const config = await getFinancialConfig();
+
+  const nextLoanType = normalizeLoanType(updates.loanType || loan.loanType);
+  const nextAmount = toInteger(updates.amount ?? loan.amount, 0);
+  const nextDuration = toInteger(updates.duration ?? loan.selectedMonths ?? loan.duration, 0);
+  const nextStatus = updates.status || loan.status;
+  const nextBalance = toInteger(
+    updates.balance ?? loan.balance ?? loan.amount,
+    toInteger(loan.amount, 0)
+  );
+
+  if (nextAmount <= 0) {
+    throw new Error('Loan amount must be greater than zero.');
+  }
+  if (nextDuration <= 0) {
+    throw new Error('Loan duration must be greater than zero.');
+  }
+
+  const mode = normalizeInterestCalculationMode(
+    loan.interestCalculationModeApplied || config.interestCalculationMode
+  );
+  const monthlyRatePercent = Number.isFinite(toFloat(loan.monthlyInterestRateApplied, NaN))
+    ? toFloat(loan.monthlyInterestRateApplied, 0)
+    : (nextLoanType === 'long_term'
+      ? toFloat(config.longTermInterestRate, 1.5)
+      : toFloat(config.loanInterestRate, 2));
+  const monthlyRate = monthlyRatePercent / 100;
+
+  let customPayments = null;
+  if (loan.repaymentType === 'custom') {
+    const existingPlan = parseRepaymentPlan(loan);
+    if (existingPlan.length !== nextDuration) {
+      throw new Error('Custom repayment plan length does not match the updated duration.');
+    }
+    customPayments = existingPlan.map((row) => toInteger(row?.payment, 0));
+  }
+
+  const repaymentPlan = generateRepaymentSchedule({
+    principal: nextAmount,
+    months: nextDuration,
+    monthlyRate,
+    customPayments,
+    interestCalculationMode: mode
+  });
+  const repaymentPlanAudit = buildRepaymentPlanAudit({
+    loanType: nextLoanType,
+    repaymentType: loan.repaymentType,
+    principal: nextAmount,
+    months: nextDuration,
+    monthlyRate,
+    interestCalculationMode: mode,
+    hasCustomPayments: Array.isArray(customPayments),
+    generatedAt: new Date().toISOString()
+  });
+
+  const payload = {
+    amount: nextAmount,
+    balance: nextBalance,
+    status: nextStatus,
+    loanType: nextLoanType,
+    duration: nextDuration,
+    selectedMonths: nextDuration,
+    repaymentPlan: JSON.stringify(repaymentPlan),
+    ...repaymentPlanAudit
+  };
+
+  await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.LOANS,
+    loanId,
+    payload
+  );
+
+  return { success: true, loanId };
+}
+
+async function deleteLoan(loanId) {
+  if (!loanId) {
+    throw new Error('Loan ID is required.');
+  }
+
+  const repayments = await listAllDocuments(
+    COLLECTIONS.LOAN_REPAYMENTS,
+    [Query.equal('loanId', loanId)]
+  );
+  for (const repayment of repayments) {
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS, repayment.$id);
+  }
+
+  const charges = await listAllDocuments(
+    COLLECTIONS.LOAN_CHARGES,
+    [Query.equal('loanId', loanId)]
+  );
+  for (const charge of charges) {
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LOAN_CHARGES, charge.$id);
+  }
+
+  if (COLLECTIONS.LOAN_GUARANTORS) {
+    const guarantors = await listAllDocuments(
+      COLLECTIONS.LOAN_GUARANTORS,
+      [Query.equal('loanId', loanId)]
+    );
+    for (const guarantor of guarantors) {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LOAN_GUARANTORS, guarantor.$id);
+    }
+  }
+
+  if (COLLECTIONS.LOAN_EARLY_REPAYMENTS) {
+    const requests = await listAllDocuments(
+      COLLECTIONS.LOAN_EARLY_REPAYMENTS,
+      [Query.equal('loanId', loanId)]
+    );
+    for (const request of requests) {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LOAN_EARLY_REPAYMENTS, request.$id);
+    }
+  }
+
+  if (COLLECTIONS.LEDGER_ENTRIES) {
+    const ledgerEntries = await listAllDocuments(
+      COLLECTIONS.LEDGER_ENTRIES,
+      [Query.equal('loanId', loanId)]
+    );
+    for (const entry of ledgerEntries) {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LEDGER_ENTRIES, entry.$id);
+    }
+  }
+
+  await databases.deleteDocument(DATABASE_ID, COLLECTIONS.LOANS, loanId);
+
+  return { success: true, message: 'Loan deleted successfully.' };
 }
 
 async function validateLoanApplication(loanId) {

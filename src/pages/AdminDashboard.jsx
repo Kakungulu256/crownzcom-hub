@@ -135,9 +135,11 @@ const AdminDashboard = () => {
                 <div className="app-subtitle">Admin / {pageTitle()}</div>
                 <div className="app-title">{pageTitle()}</div>
               </div>
-              <Link to="/admin" className="text-sm font-semibold text-blue-600 hover:text-blue-800">
-                Back to Overview
-              </Link>
+              {location.pathname !== '/admin' && (
+                <Link to="/admin" className="text-sm font-semibold text-blue-600 hover:text-blue-800">
+                  Back to Overview
+                </Link>
+              )}
             </div>
           </div>
           <main className="p-8">

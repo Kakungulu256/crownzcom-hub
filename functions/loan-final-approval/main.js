@@ -39,7 +39,7 @@ const LOAN_STATUSES = {
 const {
   normalizeInterestCalculationMode,
   generateRepaymentSchedule
-} = require('../shared/loan-calculations');
+} = require('./loan-calculations');
 const REPAYMENT_PLAN_VERSION = 2;
 
 const TERMINAL_LOAN_STATUSES = new Set([

@@ -31,15 +31,27 @@ const LoansManagement = () => {
   const [editingCharge, setEditingCharge] = useState(null);
   const [financialConfig, setFinancialConfig] = useState({ ...DEFAULT_FINANCIAL_CONFIG });
   const [loanRepayments, setLoanRepayments] = useState([]);
+  const [earlyRepaymentRequests, setEarlyRepaymentRequests] = useState([]);
   const [showMemberPaymentsModal, setShowMemberPaymentsModal] = useState(false);
   const [memberPaymentMonth, setMemberPaymentMonth] = useState(1);
   const [memberPaymentsSelection, setMemberPaymentsSelection] = useState({});
   const [loanPaymentsSelection, setLoanPaymentsSelection] = useState({});
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [earlyRepaymentPaidAt, setEarlyRepaymentPaidAt] = useState(new Date().toISOString().split('T')[0]);
   const [loadingAction, setLoadingAction] = useState('');
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   const [editLoanDate, setEditLoanDate] = useState('');
   const [editRepaymentDates, setEditRepaymentDates] = useState({});
+  const [bulkRepaymentSelection, setBulkRepaymentSelection] = useState({});
+  const [showEditLoanModal, setShowEditLoanModal] = useState(false);
+  const [editLoanForm, setEditLoanForm] = useState({
+    loanId: '',
+    amount: '',
+    balance: '',
+    status: '',
+    loanType: 'short_term',
+    duration: ''
+  });
   
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
 
@@ -49,14 +61,19 @@ const LoansManagement = () => {
 
   const fetchData = async () => {
     try {
-      const [loans, members, savings, charges, repayments, config] = await Promise.all([
+      const requests = [
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOANS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.MEMBERS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.SAVINGS),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_CHARGES),
         listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_REPAYMENTS),
-        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG)
-      ]);
+        fetchFinancialConfig(databases, DATABASE_ID, COLLECTIONS.FINANCIAL_CONFIG),
+        COLLECTIONS.LOAN_EARLY_REPAYMENTS
+          ? listAllDocuments(databases, DATABASE_ID, COLLECTIONS.LOAN_EARLY_REPAYMENTS)
+          : Promise.resolve([])
+      ];
+
+      const [loans, members, savings, charges, repayments, config, earlyRequests] = await Promise.all(requests);
       
       setLoans(loans);
       setMembers(members);
@@ -64,6 +81,7 @@ const LoansManagement = () => {
       setLoanCharges(charges);
       setLoanRepayments(repayments);
       setFinancialConfig(config);
+      setEarlyRepaymentRequests(earlyRequests);
     } catch (error) {
       toast.error('Failed to fetch data');
       console.error('Error fetching data:', error);
@@ -128,6 +146,73 @@ const LoansManagement = () => {
     } catch (error) {
       console.error('Final approval function error:', error);
       throw error;
+    }
+  };
+
+  const openEditLoanModal = (loan) => {
+    setEditLoanForm({
+      loanId: loan.$id,
+      amount: loan.amount ?? '',
+      balance: loan.balance ?? loan.amount ?? '',
+      status: loan.status || '',
+      loanType: loan.loanType || 'short_term',
+      duration: loan.selectedMonths ?? loan.duration ?? ''
+    });
+    setShowEditLoanModal(true);
+  };
+
+  const saveLoanEdits = async () => {
+    if (!editLoanForm.loanId) return;
+    try {
+      setLoadingAction(`loan-edit:${editLoanForm.loanId}`);
+      await callLoanFunction('updateLoanDetails', {
+        loanId: editLoanForm.loanId,
+        updates: {
+          amount: parseInt(editLoanForm.amount, 10) || 0,
+          balance: parseInt(editLoanForm.balance, 10) || 0,
+          status: editLoanForm.status,
+          loanType: editLoanForm.loanType,
+          duration: parseInt(editLoanForm.duration, 10) || 0
+        }
+      });
+      toast.success('Loan updated successfully');
+      setShowEditLoanModal(false);
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to update loan');
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const deleteLoan = async (loan) => {
+    if (!loan?.$id) return;
+    if (!confirm('Delete this loan and related records?')) return;
+    try {
+      setLoadingAction(`loan-delete:${loan.$id}`);
+      await callLoanFunction('deleteLoan', { loanId: loan.$id });
+      toast.success('Loan deleted');
+      fetchData();
+    } catch (error) {
+      toast.error(error.message || 'Failed to delete loan');
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const markEarlyRepaymentPaid = async (request) => {
+    try {
+      setLoadingAction(`early-payoff:${request.$id}`);
+      await callLoanFunction('markEarlyRepaymentPaid', {
+        requestId: request.$id,
+        paidAt: earlyRepaymentPaidAt
+      });
+      toast.success('Early payoff marked as paid');
+      fetchData();
+    } catch (error) {
+      toast.error(error.message || 'Failed to mark early payoff paid');
+    } finally {
+      setLoadingAction('');
     }
   };
 
@@ -484,18 +569,63 @@ const LoansManagement = () => {
     return Math.min(...months);
   };
 
+  const getLoanNextUnpaidInstallment = (loan) => {
+    const schedule = getRepaymentSchedule(loan);
+    if (schedule.length === 0) return null;
+
+    const paidMonths = new Set(
+      getLoanRepayments(loan.$id).map((repayment) => parseInt(repayment.month, 10))
+    );
+    const nextItem = schedule.find((item) => !paidMonths.has(parseInt(item.month, 10)));
+    if (!nextItem) return null;
+
+    const month = parseInt(nextItem.month, 10);
+    const payment = parseInt(nextItem.payment ?? nextItem.amount, 10) || 0;
+    const hasFirstMonthRepayment = paidMonths.has(1);
+    const bankCharge = month === 1 && !hasFirstMonthRepayment ? getLoanChargeTotal(loan.$id) : 0;
+
+    return {
+      month,
+      payment,
+      bankCharge,
+      totalAmount: payment + bankCharge
+    };
+  };
+
+  const toggleBulkLoanSelection = (loanId, checked) => {
+    setBulkRepaymentSelection((prev) => ({
+      ...prev,
+      [loanId]: checked
+    }));
+  };
+
   const getEarlyPayoffAmount = (loan, monthNumber) => {
     const principal = parseInt(loan.amount, 10) || 0;
     const remainingBalance = parseInt(loan.balance, 10) || principal;
+    let openingBalance = remainingBalance;
+    if (loan?.repaymentPlan) {
+      try {
+        const schedule = JSON.parse(loan.repaymentPlan);
+        const previous = schedule.find((item) => parseInt(item.month, 10) === parseInt(monthNumber, 10) - 1);
+        if (previous && previous.balance !== undefined && previous.balance !== null) {
+          openingBalance = Math.max(0, parseInt(previous.balance, 10) || openingBalance);
+        } else if (parseInt(monthNumber, 10) <= 1) {
+          openingBalance = principal;
+        }
+      } catch {
+        openingBalance = remainingBalance;
+      }
+    }
+    const principalOutstanding = Math.min(remainingBalance, openingBalance || remainingBalance);
     const monthlyRate = getLoanMonthlyRatePercent(loan) / 100;
     const penaltyRate = (financialConfig.earlyRepaymentPenalty || 1) / 100;
     const mode = getLoanInterestCalculationMode(loan);
     const interestBase = mode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
-      ? remainingBalance
+      ? principalOutstanding
       : principal;
-    const interestAmount = (interestBase * monthlyRate) + (interestBase * penaltyRate);
+    const interestAmount = Math.ceil(interestBase * monthlyRate) + Math.ceil(interestBase * penaltyRate);
     const bankCharge = parseInt(monthNumber) === 1 ? getLoanChargeTotal(loan.$id) : 0;
-    return Math.ceil(remainingBalance + interestAmount + bankCharge);
+    return Math.ceil(principalOutstanding + interestAmount + bankCharge);
   };
 
   const toggleMemberPaymentSelection = (loanId, field, value) => {
@@ -512,6 +642,86 @@ const LoansManagement = () => {
   const pendingGuarantorLoans = loans.filter(loan => loan.status === 'pending_guarantor_approval');
   const activeLoans = loans.filter(loan => loan.status === 'active' || loan.status === 'approved');
   const rejectedLoans = loans.filter(loan => loan.status === 'rejected');
+  const completedLoans = loans.filter(loan => loan.status === 'completed');
+  const pendingEarlyRepaymentRequests = earlyRepaymentRequests.filter(request => request.status === 'pending');
+  const bulkPayableLoans = activeLoans
+    .map((loan) => {
+      const nextInstallment = getLoanNextUnpaidInstallment(loan);
+      if (!nextInstallment) return null;
+      const memberId = normalizeMemberId(loan.memberId);
+      return {
+        loan,
+        memberId,
+        memberName: getMemberName(memberId),
+        nextInstallment
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) =>
+      (a.memberName || '').localeCompare(b.memberName || '') ||
+      a.nextInstallment.month - b.nextInstallment.month
+    );
+  const allBulkLoansSelected =
+    bulkPayableLoans.length > 0 &&
+    bulkPayableLoans.every((item) => Boolean(bulkRepaymentSelection[item.loan.$id]));
+  const selectedBulkLoans = bulkPayableLoans.filter((item) => Boolean(bulkRepaymentSelection[item.loan.$id]));
+  const selectedBulkTotal = selectedBulkLoans.reduce(
+    (sum, item) => sum + (parseInt(item.nextInstallment.totalAmount, 10) || 0),
+    0
+  );
+
+  const toggleSelectAllBulkLoans = (checked) => {
+    const next = { ...bulkRepaymentSelection };
+    bulkPayableLoans.forEach((item) => {
+      next[item.loan.$id] = checked;
+    });
+    setBulkRepaymentSelection(next);
+  };
+
+  const recordBulkNextInstallments = async () => {
+    if (selectedBulkLoans.length === 0) {
+      toast.error('Select at least one loan to post.');
+      return;
+    }
+
+    try {
+      setLoadingAction('bulk-next-installments');
+      const successes = [];
+      const failures = [];
+
+      for (const item of selectedBulkLoans) {
+        try {
+          await callLoanFunction('recordRepayment', {
+            loanId: item.loan.$id,
+            month: item.nextInstallment.month,
+            isEarlyPayment: false,
+            paidAt: paymentDate
+          });
+          successes.push(item);
+        } catch (error) {
+          failures.push({ item, error });
+        }
+      }
+
+      if (successes.length > 0) {
+        toast.success(`Recorded ${successes.length} repayment(s).`);
+      }
+      if (failures.length > 0) {
+        const first = failures[0];
+        toast.error(
+          `${failures.length} repayment(s) failed. First: ${first.item.memberName}, loan ${first.item.loan.$id.slice(0, 8)} - ${first.error?.message || 'Unknown error'}`
+        );
+      }
+
+      setBulkRepaymentSelection({});
+      fetchData();
+    } catch (error) {
+      toast.error(error.message || 'Failed to record bulk repayments');
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
   const selectedMemberId = selectedMember?.$id || null;
   const selectedMemberLoans = selectedMemberId ? getMemberLoans(selectedMemberId) : [];
   const selectedMemberSavings = selectedMemberId ? getMemberSavings(selectedMemberId) : 0;
@@ -662,6 +872,183 @@ const LoansManagement = () => {
               activeLoans.reduce((total, loan) => total + loan.amount, 0)
             )}
           </div>
+        </div>
+      </div>
+
+      {pendingEarlyRepaymentRequests.length > 0 && (
+        <div className="card mb-6 border border-amber-200">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">Early Payoff Requests</h3>
+              <p className="text-sm text-gray-600">
+                Members requested to close loans early. Mark as paid to post the payoff.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date</label>
+              <input
+                type="date"
+                value={earlyRepaymentPaidAt}
+                onChange={(e) => setEarlyRepaymentPaidAt(e.target.value)}
+                className="form-input w-44"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Loan</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Requested Amount</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Requested Date</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Action</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {pendingEarlyRepaymentRequests.map((request) => {
+                  const loanId = normalizeLoanId(request.loanId);
+                  const loan = loans.find(item => item.$id === loanId);
+                  const memberId = normalizeMemberId(request.memberId) || normalizeMemberId(loan?.memberId);
+                  const memberName = getMemberName(memberId);
+                  const requestedAmount = parseInt(request.amount, 10) ||
+                    (loan ? getEarlyPayoffAmount(loan, parseInt(request.month, 10) || getLoanNextUnpaidInstallment(loan)?.month || 1) : 0);
+                  const requestedDate = request.requestedForDate || request.requestedAt || request.createdAt;
+
+                  return (
+                    <tr key={request.$id}>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <div className="font-medium">{memberName}</div>
+                        <div className="text-xs text-gray-500">{memberId || '-'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <div className="font-medium">{loan ? formatCurrency(loan.amount) : 'Loan'}</div>
+                        <div className="text-xs text-gray-500">{loan?.loanType || '-'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                        {formatCurrency(requestedAmount)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center text-gray-700">
+                        {requestedDate ? new Date(requestedDate).toLocaleDateString() : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center">
+                        <button
+                          type="button"
+                          onClick={() => markEarlyRepaymentPaid(request)}
+                          disabled={loadingAction === `early-payoff:${request.$id}`}
+                          className="text-blue-600 hover:text-blue-900 font-medium"
+                        >
+                          {loadingAction === `early-payoff:${request.$id}` ? 'Posting...' : 'Mark Paid'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="card mb-6">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Bulk Next Installment Posting</h3>
+            <p className="text-sm text-gray-600">
+              Posts only the next unpaid installment per selected loan.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date</label>
+              <input
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                className="form-input w-44"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => toggleSelectAllBulkLoans(!allBulkLoansSelected)}
+              className="btn-secondary"
+              disabled={bulkPayableLoans.length === 0}
+            >
+              {allBulkLoansSelected ? 'Clear All' : 'Select All'}
+            </button>
+            <button
+              type="button"
+              onClick={recordBulkNextInstallments}
+              className="btn-primary"
+              disabled={selectedBulkLoans.length === 0 || loadingAction === 'bulk-next-installments'}
+            >
+              {loadingAction === 'bulk-next-installments'
+                ? 'Posting...'
+                : `Post Selected (${selectedBulkLoans.length})`}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-sm mb-3">
+          <span className="text-gray-700">
+            Eligible loans: <strong>{bulkPayableLoans.length}</strong>
+          </span>
+          <span className="text-gray-700">
+            Selected total: <strong>{formatCurrency(selectedBulkTotal)}</strong>
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pick</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Next Month</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Installment</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Charge</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {bulkPayableLoans.map((item) => (
+                <tr key={item.loan.$id}>
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(bulkRepaymentSelection[item.loan.$id])}
+                      onChange={(e) => toggleBulkLoanSelection(item.loan.$id, e.target.checked)}
+                    />
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    <div className="font-medium">{item.memberName}</div>
+                    <div className="text-xs text-gray-500">{item.memberId}</div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    <div>{formatCurrency(item.loan.amount)}</div>
+                    <div className="text-xs text-gray-500">ID: {item.loan.$id.slice(0, 8)}</div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-center text-gray-900">
+                    {item.nextInstallment.month}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-900">
+                    {formatCurrency(item.nextInstallment.payment)}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-900">
+                    {formatCurrency(item.nextInstallment.bankCharge)}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-blue-700">
+                    {formatCurrency(item.nextInstallment.totalAmount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {bulkPayableLoans.length === 0 && (
+            <div className="text-sm text-gray-500 py-4">No active loans with unpaid installments found.</div>
+          )}
         </div>
       </div>
 
@@ -912,6 +1299,20 @@ const LoansManagement = () => {
                               >
                                 Edit Dates
                               </button>
+                              <button
+                                onClick={() => openEditLoanModal(loan)}
+                                className="text-slate-600 hover:text-slate-900"
+                                title="Edit Loan"
+                              >
+                                Edit Loan
+                              </button>
+                              <button
+                                onClick={() => deleteLoan(loan)}
+                                className="text-red-600 hover:text-red-800"
+                                title="Delete Loan"
+                              >
+                                Delete
+                              </button>
                             </>
                           )}
                         </div>
@@ -1004,6 +1405,20 @@ const LoansManagement = () => {
                             ) : (
                               <XMarkIcon className="h-5 w-5" />
                             )}
+                          </button>
+                          <button
+                            onClick={() => openEditLoanModal(loan)}
+                            className="text-slate-600 hover:text-slate-900"
+                            title="Edit Loan"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteLoan(loan)}
+                            className="text-red-600 hover:text-red-800"
+                            title="Delete Loan"
+                          >
+                            Delete
                           </button>
                         </div>
                       </td>
@@ -1157,6 +1572,82 @@ const LoansManagement = () => {
                         >
                           Edit Dates
                         </button>
+                        <button
+                          onClick={() => openEditLoanModal(loan)}
+                          className="text-slate-600 hover:text-slate-900"
+                          title="Edit Loan"
+                        >
+                          Edit Loan
+                        </button>
+                        <button
+                          onClick={() => deleteLoan(loan)}
+                          className="text-red-600 hover:text-red-800"
+                          title="Delete Loan"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Completed Loans */}
+      {completedLoans.length > 0 && (
+        <div className="card mb-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Completed Loans</h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Member
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Balance
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {completedLoans.map((loan) => (
+                  <tr key={loan.$id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {getMemberName(loan.memberId)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                      {formatCurrency(loan.amount)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                      {formatCurrency(loan.balance || 0)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                      <div className="flex justify-center space-x-2">
+                        <button
+                          onClick={() => openEditLoanModal(loan)}
+                          className="text-slate-600 hover:text-slate-900"
+                          title="Edit Loan"
+                        >
+                          Edit Loan
+                        </button>
+                        <button
+                          onClick={() => deleteLoan(loan)}
+                          className="text-red-600 hover:text-red-800"
+                          title="Delete Loan"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1249,6 +1740,93 @@ const LoansManagement = () => {
                 className="btn-secondary"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditLoanModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Loan</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (UGX)</label>
+                <input
+                  type="number"
+                  value={editLoanForm.amount}
+                  onChange={(e) => setEditLoanForm((prev) => ({ ...prev, amount: e.target.value }))}
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Balance (UGX)</label>
+                <input
+                  type="number"
+                  value={editLoanForm.balance}
+                  onChange={(e) => setEditLoanForm((prev) => ({ ...prev, balance: e.target.value }))}
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select
+                  value={editLoanForm.status}
+                  onChange={(e) => setEditLoanForm((prev) => ({ ...prev, status: e.target.value }))}
+                  className="form-input"
+                >
+                  <option value="pending">pending</option>
+                  <option value="pending_guarantor_approval">pending_guarantor_approval</option>
+                  <option value="pending_admin_approval">pending_admin_approval</option>
+                  <option value="approved">approved</option>
+                  <option value="active">active</option>
+                  <option value="completed">completed</option>
+                  <option value="rejected">rejected</option>
+                  <option value="cancelled">cancelled</option>
+                  <option value="guarantor_coverage_failed">guarantor_coverage_failed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Loan Type</label>
+                <select
+                  value={editLoanForm.loanType}
+                  onChange={(e) => setEditLoanForm((prev) => ({ ...prev, loanType: e.target.value }))}
+                  className="form-input"
+                >
+                  <option value="short_term">short_term</option>
+                  <option value="long_term">long_term</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Duration (months)</label>
+                <input
+                  type="number"
+                  value={editLoanForm.duration}
+                  onChange={(e) => setEditLoanForm((prev) => ({ ...prev, duration: e.target.value }))}
+                  className="form-input"
+                />
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-gray-500">
+              Note: editing amount or duration will regenerate the repayment plan automatically.
+            </p>
+            <div className="flex justify-end mt-6 space-x-3">
+              <button
+                type="button"
+                onClick={() => setShowEditLoanModal(false)}
+                className="btn-secondary"
+                disabled={loadingAction.startsWith('loan-edit:')}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveLoanEdits}
+                className="btn-primary"
+                disabled={loadingAction.startsWith('loan-edit:')}
+              >
+                {loadingAction.startsWith('loan-edit:') ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>
