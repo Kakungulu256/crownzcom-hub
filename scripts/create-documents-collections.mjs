@@ -48,6 +48,10 @@ const documentsBucketId = readEnv(
   'DOCUMENTS_BUCKET_ID',
   'VITE_APPWRITE_DOCUMENTS_BUCKET_ID'
 ) || 'documents';
+const brandingBucketId = readEnv(
+  'BRANDING_BUCKET_ID',
+  'VITE_APPWRITE_BRANDING_BUCKET_ID'
+) || 'branding';
 
 const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
 const databases = new Databases(client);
@@ -56,6 +60,12 @@ const storage = new Storage(client);
 const adminRole = Role.label('admin');
 const adminPermissions = [
   Permission.read(adminRole),
+  Permission.create(adminRole),
+  Permission.update(adminRole),
+  Permission.delete(adminRole)
+];
+const brandingPermissions = [
+  Permission.read(Role.any()),
   Permission.create(adminRole),
   Permission.update(adminRole),
   Permission.delete(adminRole)
@@ -84,14 +94,14 @@ const ensureCollection = async (name, id) => {
   return created.$id;
 };
 
-const ensureBucket = async (name, id) => {
+const ensureBucket = async (name, id, permissions = adminPermissions) => {
   const existing = await storage.listBuckets();
   const found = existing.buckets.find((bucket) => bucket.$id === id || bucket.name === name);
   if (found) return found.$id;
   const created = await storage.createBucket(
     id || ID.unique(),
     name,
-    adminPermissions,
+    permissions,
     true
   );
   return created.$id;
@@ -122,7 +132,8 @@ const createIndexes = async (collectionId, actions) => {
 const main = async () => {
   const documentsId = await ensureCollection('documents', documentsCollectionId);
   const categoriesId = await ensureCollection('document_categories', categoriesCollectionId);
-  const bucketId = await ensureBucket('documents', documentsBucketId);
+  const bucketId = await ensureBucket('documents', documentsBucketId, adminPermissions);
+  const brandingId = await ensureBucket('branding', brandingBucketId, brandingPermissions);
 
   await createAttributes(documentsId, [
     () => databases.createStringAttribute(databaseId, documentsId, 'title', 255, true),
@@ -159,6 +170,7 @@ const main = async () => {
   console.log(`VITE_APPWRITE_DOCUMENTS_COLLECTION_ID=${documentsId}`);
   console.log(`VITE_APPWRITE_DOCUMENT_CATEGORIES_COLLECTION_ID=${categoriesId}`);
   console.log(`VITE_APPWRITE_DOCUMENTS_BUCKET_ID=${bucketId}`);
+  console.log(`VITE_APPWRITE_BRANDING_BUCKET_ID=${brandingId}`);
 };
 
 main().catch((error) => {

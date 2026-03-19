@@ -143,3 +143,7 @@ Use this checklist to implement one task at a time, in strict order.
 ## Temporary UI Hides (Easy Revert Notes)
 
 - Member loan application form: commented out Application Date field and Repayment Plan selector. See `src/components/member/MemberLoans.jsx`.
+
+
+Trigger this function on:
+users.create

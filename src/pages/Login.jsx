@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../lib/appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID, BRANDING_BUCKET_ID } from '../lib/appwrite';
 import { fetchFinancialConfig } from '../lib/financialConfig';
 import toast from 'react-hot-toast';
 
@@ -31,7 +31,7 @@ const Login = () => {
           COLLECTIONS.FINANCIAL_CONFIG
         );
         if (config.logoFileId) {
-          const bucketId = config.logoBucketId || DOCUMENTS_BUCKET_ID;
+          const bucketId = config.logoBucketId || BRANDING_BUCKET_ID || DOCUMENTS_BUCKET_ID;
           setLogoUrl(storage.getFilePreview(bucketId, config.logoFileId));
         }
       } catch {
@@ -160,7 +160,7 @@ const Login = () => {
 
             <p className="text-center text-xs text-gray-500">
               {requireMemberProfile
-                ? 'Only accounts linked to SACCO member profiles can access the system.'
+                ? 'Only accounts linked to Club member profiles can access the system.'
                 : 'Only valid Appwrite Auth accounts can access the system.'}
             </p>
           </div>

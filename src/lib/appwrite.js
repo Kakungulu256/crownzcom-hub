@@ -17,6 +17,8 @@ export { Query };
 export const DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID;
 export const DOCUMENTS_BUCKET_ID =
   import.meta.env.VITE_APPWRITE_DOCUMENTS_BUCKET_ID || 'documents';
+export const BRANDING_BUCKET_ID =
+  import.meta.env.VITE_APPWRITE_BRANDING_BUCKET_ID || 'branding';
 
 const COLLECTION_ENV = {
   VITE_APPWRITE_MEMBERS_COLLECTION_ID: import.meta.env.VITE_APPWRITE_MEMBERS_COLLECTION_ID,

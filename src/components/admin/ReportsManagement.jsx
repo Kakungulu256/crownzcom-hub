@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../../lib/appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID, BRANDING_BUCKET_ID } from '../../lib/appwrite';
 import { formatCurrency } from '../../utils/financial';
 import { DocumentArrowDownIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
@@ -79,7 +79,7 @@ const ReportsManagement = () => {
 
     const logoUrl = financialConfig.logoFileId
       ? storage.getFilePreview(
-          financialConfig.logoBucketId || DOCUMENTS_BUCKET_ID,
+          financialConfig.logoBucketId || BRANDING_BUCKET_ID || DOCUMENTS_BUCKET_ID,
           financialConfig.logoFileId
         )
       : '/logo.png';
@@ -1443,6 +1443,10 @@ const ReportsManagement = () => {
   };
 
   const exportAgmSummaryPdf = () => {
+    const formatAgmAmount = (value) => new Intl.NumberFormat('en-UG', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    }).format(Number(value) || 0);
     const snapshotDate = getSnapshotDate();
     const unitTrustBeforeStart = reportData.unitTrust.filter((record) => isBeforeStart(record?.date));
     const unitTrustRangeTotals = sumUnitTrustByType(filteredUnitTrust);
@@ -1576,6 +1580,36 @@ const ReportsManagement = () => {
       addMonthly(loanInterestByMonth, monthKey, interestAmount);
     });
 
+    const loanPrincipalPaidByMonth = {};
+    const firstMonthChargeApplied = new Set();
+    reportData.loanRepayments.forEach((repayment) => {
+      const paidAt = repayment.paidAt || repayment.createdAt || repayment.$createdAt;
+      if (!isWithinRange(paidAt)) return;
+      const loanId = repayment.loanId?.$id || repayment.loanId;
+      if (!loanId) return;
+      const schedule = loanSchedulesById.get(loanId);
+      if (!schedule) return;
+      const monthNumber = parseInt(repayment.month, 10);
+      if (!Number.isFinite(monthNumber)) return;
+      const scheduleItem = schedule.find((item) => parseInt(item.month, 10) === monthNumber);
+      if (!scheduleItem) return;
+      const interestAmount = parseInt(scheduleItem.interest, 10) || 0;
+      const scheduledPrincipal = parseInt(scheduleItem.principal, 10) || 0;
+      const chargeAmount = monthNumber === 1 && !firstMonthChargeApplied.has(loanId)
+        ? getLoanChargeTotal(loanId)
+        : 0;
+      if (monthNumber === 1) {
+        firstMonthChargeApplied.add(loanId);
+      }
+      const totalPaid = Number(repayment.amount) || 0;
+      let principalPaid = Math.max(0, totalPaid - interestAmount - chargeAmount);
+      if (!repayment.isEarlyPayment && scheduledPrincipal > 0) {
+        principalPaid = Math.min(principalPaid, scheduledPrincipal);
+      }
+      const monthKey = toMonthKey(paidAt);
+      addMonthly(loanPrincipalPaidByMonth, monthKey, principalPaid);
+    });
+
     const loansDisbursedByMonth = {};
     reportData.loans
       .filter((loan) => ['active', 'approved', 'completed'].includes(loan.status))
@@ -1588,6 +1622,7 @@ const ReportsManagement = () => {
     const monthlyKeys = Array.from(new Set([
       ...Object.keys(trustInterestByMonth),
       ...Object.keys(loanInterestByMonth),
+      ...Object.keys(loanPrincipalPaidByMonth),
       ...Object.keys(trustInvestedByMonth),
       ...Object.keys(loansDisbursedByMonth),
       ...Object.keys(savingsByMonth)
@@ -1606,6 +1641,7 @@ const ReportsManagement = () => {
       trustInvested: trustInvestedByMonth[key] || 0,
       trustInterest: trustInterestByMonth[key] || 0,
       loanInterest: loanInterestByMonth[key] || 0,
+      loanPrincipalPaid: loanPrincipalPaidByMonth[key] || 0,
       loansDisbursed: loansDisbursedByMonth[key] || 0,
       savings: savingsByMonth[key] || 0
     }));
@@ -1614,6 +1650,7 @@ const ReportsManagement = () => {
       Math.abs(row.trustInvested) > 0 ||
       Math.abs(row.trustInterest) > 0 ||
       Math.abs(row.loanInterest) > 0 ||
+      Math.abs(row.loanPrincipalPaid) > 0 ||
       Math.abs(row.loansDisbursed) > 0 ||
       Math.abs(row.savings) > 0
     ));
@@ -1623,6 +1660,7 @@ const ReportsManagement = () => {
         acc.trustInvested += row.trustInvested || 0;
         acc.trustInterest += row.trustInterest || 0;
         acc.loanInterest += row.loanInterest || 0;
+        acc.loanPrincipalPaid += row.loanPrincipalPaid || 0;
         acc.loansDisbursed += row.loansDisbursed || 0;
         acc.savings += row.savings || 0;
         return acc;
@@ -1631,6 +1669,7 @@ const ReportsManagement = () => {
         trustInvested: 0,
         trustInterest: 0,
         loanInterest: 0,
+        loanPrincipalPaid: 0,
         loansDisbursed: 0,
         savings: 0
       }
@@ -1640,22 +1679,26 @@ const ReportsManagement = () => {
       ? [
           ...monthlyDetailRowsFiltered.map((row) => ([
             formatMonthLabel(row.key),
-            formatCurrency(row.trustInvested),
-            formatCurrency(row.trustInterest),
-            formatCurrency(row.loanInterest),
-            formatCurrency(row.loansDisbursed),
-            formatCurrency(row.savings)
+            formatAgmAmount(row.savings),
+            '',
+            formatAgmAmount(row.trustInvested),
+            formatAgmAmount(row.trustInterest),
+            formatAgmAmount(row.loanPrincipalPaid),
+            formatAgmAmount(row.loanInterest),
+            formatAgmAmount(row.loansDisbursed)
           ])),
           [
             'Total',
-            formatCurrency(monthlyTotals.trustInvested),
-            formatCurrency(monthlyTotals.trustInterest),
-            formatCurrency(monthlyTotals.loanInterest),
-            formatCurrency(monthlyTotals.loansDisbursed),
-            formatCurrency(monthlyTotals.savings)
+            formatAgmAmount(monthlyTotals.savings),
+            '',
+            formatAgmAmount(monthlyTotals.trustInvested),
+            formatAgmAmount(monthlyTotals.trustInterest),
+            formatAgmAmount(monthlyTotals.loanPrincipalPaid),
+            formatAgmAmount(monthlyTotals.loanInterest),
+            formatAgmAmount(monthlyTotals.loansDisbursed)
           ]
         ]
-      : [['No monthly activity found in range', '', '', '', '', '']];
+      : [['No monthly activity found in range', '', '', '', '', '', '', '']];
 
     const meta = [
       `Generated: ${new Date().toLocaleString()}`,
@@ -1671,36 +1714,36 @@ const ReportsManagement = () => {
     });
 
     let cursorY = startY;
-    const SECTION_GAP = 3;
+    const SECTION_GAP = 5;
     cursorY = addSectionTitle(doc, cursorY, 'Statement of Financial Position', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Assets - Trust Balance (Invested Funds)', value: formatCurrency(closingTrustBalance) },
-      { label: 'Assets - Loans Receivable (Outstanding Principal)', value: formatCurrency(loansReceivable) },
-      { label: 'Assets - Cash at Bank', value: formatCurrency(cashAtBankSnapshot) },
-      { label: 'Total Assets', value: formatCurrency(totalAssets) },
-      { label: 'Liabilities - Member Savings / Deposits', value: formatCurrency(totalLiabilities) },
-      { label: 'Total Liabilities', value: formatCurrency(totalLiabilities) },
-      { label: 'Net Position (Assets - Liabilities)', value: formatCurrency(netPosition) }
+      { label: 'Assets - Trust Balance (Invested Funds)', value: formatAgmAmount(closingTrustBalance) },
+      { label: 'Assets - Loans Receivable (Outstanding Principal)', value: formatAgmAmount(loansReceivable) },
+      { label: 'Assets - Cash at Bank', value: formatAgmAmount(cashAtBankSnapshot) },
+      { label: 'Total Assets', value: formatAgmAmount(totalAssets) },
+      { label: 'Liabilities - Member Savings / Deposits', value: formatAgmAmount(totalLiabilities) },
+      { label: 'Total Liabilities', value: formatAgmAmount(totalLiabilities) },
+      { label: 'Net Position (Assets - Liabilities)', value: formatAgmAmount(netPosition) }
     ], pdfMeta);
 
     cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Unit Trust Activity (Rollforward)', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Opening Trust Balance', value: formatCurrency(openingTrustBalance) },
-      { label: 'Total Invested to Trust', value: formatCurrency(unitTrustRangeTotals.purchase) },
-      { label: 'Trust Interest Earned', value: formatCurrency(unitTrustRangeTotals.interest) },
-      { label: 'Total Withdrawals from Trust', value: formatCurrency(unitTrustRangeTotals.withdrawal) },
-      { label: 'Closing Trust Balance', value: formatCurrency(closingTrustBalance) }
+      { label: 'Opening Trust Balance', value: formatAgmAmount(openingTrustBalance) },
+      { label: 'Total Invested to Trust', value: formatAgmAmount(unitTrustRangeTotals.purchase) },
+      { label: 'Trust Interest Earned', value: formatAgmAmount(unitTrustRangeTotals.interest) },
+      { label: 'Total Withdrawals from Trust', value: formatAgmAmount(unitTrustRangeTotals.withdrawal) },
+      { label: 'Closing Trust Balance', value: formatAgmAmount(closingTrustBalance) }
     ], pdfMeta);
 
     cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Loan Portfolio Summary', pdfMeta);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Total Loans Disbursed', value: formatCurrency(totalLoansDisbursedInRange) },
-      { label: 'Total Loan Repayments (Cash In)', value: formatCurrency(totalLoanRepaymentsInRange) },
-      { label: 'Loan Interest Earned', value: formatCurrency(loanInterestPaid) },
-      { label: 'Bank/Transfer Charges Earned', value: formatCurrency(totalTransferChargesInRange) },
-      { label: 'Outstanding Loan Balance (Principal)', value: formatCurrency(loansReceivable) }
+      { label: 'Total Loans Disbursed', value: formatAgmAmount(totalLoansDisbursedInRange) },
+      { label: 'Total Loan Repayments (Cash In)', value: formatAgmAmount(totalLoanRepaymentsInRange) },
+      { label: 'Loan Interest Earned', value: formatAgmAmount(loanInterestPaid) },
+      { label: 'Bank/Transfer Charges Earned', value: formatAgmAmount(totalTransferChargesInRange) },
+      { label: 'Outstanding Loan Balance (Principal)', value: formatAgmAmount(loansReceivable) }
     ], pdfMeta);
 
     cursorY += SECTION_GAP;
@@ -1710,24 +1753,26 @@ const ReportsManagement = () => {
       cursorY,
       [
         'Month',
-        'Trust Invested',
+        'Savings',
+        '',
+        'Invested In Trust',
         'Trust Interest Earned',
+        'Loan Principal Paid',
         'Loan Interest Earned',
-        'Loans Disbursed',
-        'Savings'
+        'Loans Disbursed'
       ],
       monthlyDetailRows,
       pdfMeta
     );
 
 
-    cursorY += SECTION_GAP;
+    cursorY += SECTION_GAP + 2;
     cursorY = addSectionTitle(doc, cursorY, 'Member Contributions & Club Expenses', pdfMeta, 6);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Total Member Savings', value: formatCurrency(totalSavingsInRange) },
-      { label: 'Total Subscriptions', value: formatCurrency(totalSubscriptionsInRange) },
-      { label: 'Total Interest Paid to Members', value: formatCurrency(totalInterestPayoutsInRange) },
-      { label: 'Total Club Expenses', value: formatCurrency(totalExpensesInRange) }
+      { label: 'Total Member Savings', value: formatAgmAmount(totalSavingsInRange) },
+      { label: 'Total Subscriptions', value: formatAgmAmount(totalSubscriptionsInRange) },
+      { label: 'Total Interest Paid to Members', value: formatAgmAmount(totalInterestPayoutsInRange) },
+      { label: 'Total Club Expenses', value: formatAgmAmount(totalExpensesInRange) }
     ], pdfMeta);
 
     cursorY += SECTION_GAP;
@@ -1737,15 +1782,15 @@ const ReportsManagement = () => {
       cursorY,
       ['Category', 'Amount'],
       [
-        ['Income - Loan Interest', formatCurrency(loanInterestPaid)],
-        ['Income - Transfer / Bank Charges', formatCurrency(totalTransferChargesInRange)],
-        ['Income - Trust Interest', formatCurrency(unitTrustRangeTotals.interest)],
-        ['Income - Subscriptions', formatCurrency(totalSubscriptionsInRange)],
-        ['Total Income', formatCurrency(totalIncome)],
-        ['Expense - Club Expenses', formatCurrency(totalExpensesInRange)],
-        ['Expense - Interest Paid to Members', formatCurrency(totalInterestPayoutsInRange)],
-        ['Total Expenses', formatCurrency(totalExpenses)],
-        ['Net Income', formatCurrency(netIncome)]
+        ['Income - Loan Interest', formatAgmAmount(loanInterestPaid)],
+        ['Income - Transfer / Bank Charges', formatAgmAmount(totalTransferChargesInRange)],
+        ['Income - Trust Interest', formatAgmAmount(unitTrustRangeTotals.interest)],
+        ['Income - Subscriptions', formatAgmAmount(totalSubscriptionsInRange)],
+        ['Total Income', formatAgmAmount(totalIncome)],
+        ['Expense - Club Expenses', formatAgmAmount(totalExpensesInRange)],
+        ['Expense - Interest Paid to Members', formatAgmAmount(totalInterestPayoutsInRange)],
+        ['Total Expenses', formatAgmAmount(totalExpenses)],
+        ['Net Income', formatAgmAmount(netIncome)]
       ],
       pdfMeta
     );
@@ -1753,7 +1798,7 @@ const ReportsManagement = () => {
     cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Accruals (Unpaid Earnings)', pdfMeta, 3);
     cursorY = addKeyValueRows(doc, cursorY, [
-      { label: 'Loan Interest Accrued (Unpaid)', value: formatCurrency(getLoanInterestBreakdown(filteredLoans, filteredLoanRepayments).interestAccrued) }
+      { label: 'Loan Interest Accrued (Unpaid)', value: formatAgmAmount(getLoanInterestBreakdown(filteredLoans, filteredLoanRepayments).interestAccrued) }
     ], pdfMeta);
 
     savePdf(doc, `agm-financial-summary-${new Date().toISOString().slice(0, 10)}.pdf`);

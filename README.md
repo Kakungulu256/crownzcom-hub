@@ -147,6 +147,7 @@ A comprehensive web application for managing SACCO (Savings and Credit Cooperati
    ```
    - type (string, required) - "purchase", "withdrawal", "interest"
    - amount (integer, required) - amount in UGX
+   - amountFloat (float, optional) - amount with decimals (used for interest)
    - description (string, required)
    - date (datetime, required)
    - createdAt (datetime, required)
@@ -174,7 +175,16 @@ A comprehensive web application for managing SACCO (Savings and Credit Cooperati
    - Create a user account for admin
    - Add label `admin` to the user account
 
-6. **Deploy Appwrite Function** (Required for member creation with auth):
+6. **Create Storage Buckets**:
+   - `documents` (admin-only)
+   - `branding` (public read, admin write) for the login/report logo
+
+   You can use:
+   ```bash
+   node scripts/create-documents-collections.mjs
+   ```
+
+7. **Deploy Appwrite Functions**:
    
    **For Cloud Appwrite:**
    ```bash
@@ -187,8 +197,12 @@ A comprehensive web application for managing SACCO (Savings and Credit Cooperati
    # Initialize project (if not done)
    appwrite init project
    
-   # Deploy the function
+   # Deploy the functions
    cd functions/create-member
+   appwrite deploy function
+   cd ../batch-add-savings
+   appwrite deploy function
+   cd ../enforce-member-link
    appwrite deploy function
    ```
    
@@ -197,7 +211,56 @@ A comprehensive web application for managing SACCO (Savings and Credit Cooperati
    *Note: Self-hosted Appwrite may have limited Functions support. Use manual approach:*
    
    - Go to Functions section in Appwrite Console
-   - Create a new function named `create-member`
+   - Create functions:
+     - `create-member`
+     - `batch-add-savings`
+     - `enforce-member-link`
+
+### Function Environment Variables
+
+**create-member**
+```
+APPWRITE_FUNCTION_ENDPOINT
+APPWRITE_FUNCTION_PROJECT_ID
+APPWRITE_API_KEY
+DATABASE_ID
+MEMBERS_COLLECTION_ID
+```
+
+**batch-add-savings**
+```
+APPWRITE_FUNCTION_ENDPOINT
+APPWRITE_FUNCTION_PROJECT_ID
+APPWRITE_API_KEY
+DATABASE_ID
+SAVINGS_COLLECTION_ID
+LEDGER_ENTRIES_COLLECTION_ID (optional)
+ADMIN_LABEL=admin (optional)
+ADMIN_USER_IDS or APPWRITE_ADMIN_USER_IDS (optional)
+```
+
+**enforce-member-link (Google OAuth guard)**
+```
+APPWRITE_FUNCTION_ENDPOINT
+APPWRITE_FUNCTION_PROJECT_ID
+APPWRITE_API_KEY
+DATABASE_ID
+MEMBERS_COLLECTION_ID
+ADMIN_LABEL=admin (optional)
+ALLOWED_EMAILS (optional, comma-separated)
+```
+
+**Trigger**
+- Configure `enforce-member-link` with the `users.create` event trigger so non-members are deleted immediately after OAuth sign-in.
+
+### Branding Logo
+- Upload the logo from **Admin → Settings → Financial Configuration**.
+- The logo is stored in the `branding` bucket and referenced via `financial_config.logoFileId`.
+  
+**Env**
+```
+VITE_APPWRITE_BRANDING_BUCKET_ID=branding
+```
    - Set Runtime to `Node.js 18.0`
    - Upload the function code from `functions/create-member/`
    - If Functions are not available, members will be created in database only

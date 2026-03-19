@@ -37,6 +37,7 @@ const LoansManagement = () => {
   const [memberPaymentsSelection, setMemberPaymentsSelection] = useState({});
   const [loanPaymentsSelection, setLoanPaymentsSelection] = useState({});
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentSummaryDate, setPaymentSummaryDate] = useState(new Date().toISOString().split('T')[0]);
   const [earlyRepaymentPaidAt, setEarlyRepaymentPaidAt] = useState(new Date().toISOString().split('T')[0]);
   const [loadingAction, setLoadingAction] = useState('');
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
@@ -407,6 +408,19 @@ const LoansManagement = () => {
     return typeof value === 'object' && value.$id ? value.$id : value;
   };
 
+  const toDateKey = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') {
+      if (value.includes('T')) return value.split('T')[0];
+      if (value.length >= 10) return value.slice(0, 10);
+    }
+    try {
+      return new Date(value).toISOString().split('T')[0];
+    } catch {
+      return '';
+    }
+  };
+
   const getLoanCharge = (loanId) => {
     return loanCharges.find(charge => normalizeLoanId(charge.loanId) === normalizeLoanId(loanId));
   };
@@ -597,10 +611,10 @@ const LoansManagement = () => {
     };
   };
 
-  const toggleBulkLoanSelection = (loanId, checked) => {
+  const toggleBulkLoanSelection = (memberId, checked) => {
     setBulkRepaymentSelection((prev) => ({
       ...prev,
-      [loanId]: checked
+      [memberId]: checked
     }));
   };
 
@@ -666,19 +680,61 @@ const LoansManagement = () => {
       (a.memberName || '').localeCompare(b.memberName || '') ||
       a.nextInstallment.month - b.nextInstallment.month
     );
+  const bulkPayableGroups = Object.values(
+    bulkPayableLoans.reduce((acc, item) => {
+      const key = item.memberId || 'unknown';
+      if (!acc[key]) {
+        acc[key] = {
+          memberId: key,
+          memberName: item.memberName,
+          items: []
+        };
+      }
+      acc[key].items.push(item);
+      return acc;
+    }, {})
+  )
+    .map((group) => {
+      const totals = group.items.reduce(
+        (sum, item) => ({
+          installment: sum.installment + (parseInt(item.nextInstallment.payment, 10) || 0),
+          charge: sum.charge + (parseInt(item.nextInstallment.bankCharge, 10) || 0),
+          totalAmount: sum.totalAmount + (parseInt(item.nextInstallment.totalAmount, 10) || 0),
+          loanAmount: sum.loanAmount + (parseInt(item.loan.amount, 10) || 0)
+        }),
+        {
+          installment: 0,
+          charge: 0,
+          totalAmount: 0,
+          loanAmount: 0
+        }
+      );
+      const monthSet = new Set(group.items.map((item) => item.nextInstallment.month));
+      const nextMonth = monthSet.size === 1 ? [...monthSet][0] : 'Multiple';
+      return {
+        ...group,
+        ...totals,
+        loanCount: group.items.length,
+        nextMonth
+      };
+    })
+    .sort((a, b) => (a.memberName || '').localeCompare(b.memberName || ''));
   const allBulkLoansSelected =
-    bulkPayableLoans.length > 0 &&
-    bulkPayableLoans.every((item) => Boolean(bulkRepaymentSelection[item.loan.$id]));
-  const selectedBulkLoans = bulkPayableLoans.filter((item) => Boolean(bulkRepaymentSelection[item.loan.$id]));
-  const selectedBulkTotal = selectedBulkLoans.reduce(
-    (sum, item) => sum + (parseInt(item.nextInstallment.totalAmount, 10) || 0),
+    bulkPayableGroups.length > 0 &&
+    bulkPayableGroups.every((group) => Boolean(bulkRepaymentSelection[group.memberId]));
+  const selectedBulkGroups = bulkPayableGroups.filter((group) => Boolean(bulkRepaymentSelection[group.memberId]));
+  const selectedBulkLoans = selectedBulkGroups.flatMap((group) => group.items);
+  const selectedBulkTotal = selectedBulkGroups.reduce(
+    (sum, group) => sum + (parseInt(group.totalAmount, 10) || 0),
     0
   );
+  const selectedBulkMemberCount = selectedBulkGroups.length;
+  const selectedBulkLoanCount = selectedBulkLoans.length;
 
   const toggleSelectAllBulkLoans = (checked) => {
     const next = { ...bulkRepaymentSelection };
-    bulkPayableLoans.forEach((item) => {
-      next[item.loan.$id] = checked;
+    bulkPayableGroups.forEach((group) => {
+      next[group.memberId] = checked;
     });
     setBulkRepaymentSelection(next);
   };
@@ -742,6 +798,32 @@ const LoansManagement = () => {
   );
   const selectedMemberMaxLoanAmount = selectedMemberSavings * ((financialConfig.loanEligibilityPercentage || 80) / 100);
   const selectedMemberAvailableCredit = selectedMemberId ? getMemberAvailableCredit(selectedMemberId) : 0;
+
+  const loanById = new Map(loans.map((loan) => [loan.$id, loan]));
+  const repaymentEntriesForDate = loanRepayments.filter((repayment) => {
+    const paidAt = repayment.paidAt || repayment.createdAt;
+    return toDateKey(paidAt) === paymentSummaryDate;
+  });
+  const repaymentSummaryRows = Object.values(
+    repaymentEntriesForDate.reduce((acc, repayment) => {
+      const loanId = normalizeLoanId(repayment.loanId);
+      const loan = loanById.get(loanId);
+      const memberId = normalizeMemberId(repayment.memberId) || normalizeMemberId(loan?.memberId);
+      const key = memberId || 'unknown';
+      if (!acc[key]) {
+        acc[key] = {
+          memberId: memberId || '-',
+          memberName: getMemberName(memberId),
+          totalPaid: 0,
+          repaymentsCount: 0
+        };
+      }
+      acc[key].totalPaid += parseInt(repayment.amount, 10) || 0;
+      acc[key].repaymentsCount += 1;
+      return acc;
+    }, {})
+  ).sort((a, b) => (a.memberName || '').localeCompare(b.memberName || ''));
+  const repaymentSummaryTotal = repaymentSummaryRows.reduce((sum, row) => sum + (row.totalPaid || 0), 0);
 
   const escapeHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1060,7 +1142,7 @@ const LoansManagement = () => {
           <div>
             <h3 className="text-lg font-medium text-gray-900">Bulk Next Installment Posting</h3>
             <p className="text-sm text-gray-600">
-              Posts only the next unpaid installment per selected loan.
+              Posts only the next unpaid installment per selected member.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -1077,7 +1159,7 @@ const LoansManagement = () => {
               type="button"
               onClick={() => toggleSelectAllBulkLoans(!allBulkLoansSelected)}
               className="btn-secondary"
-              disabled={bulkPayableLoans.length === 0}
+              disabled={bulkPayableGroups.length === 0}
             >
               {allBulkLoansSelected ? 'Clear All' : 'Select All'}
             </button>
@@ -1089,14 +1171,17 @@ const LoansManagement = () => {
             >
               {loadingAction === 'bulk-next-installments'
                 ? 'Posting...'
-                : `Post Selected (${selectedBulkLoans.length})`}
+                : `Post Selected (${selectedBulkLoanCount})`}
             </button>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-4 text-sm mb-3">
           <span className="text-gray-700">
-            Eligible loans: <strong>{bulkPayableLoans.length}</strong>
+            Eligible members: <strong>{bulkPayableGroups.length}</strong>
+          </span>
+          <span className="text-gray-700">
+            Selected members: <strong>{selectedBulkMemberCount}</strong>
           </span>
           <span className="text-gray-700">
             Selected total: <strong>{formatCurrency(selectedBulkTotal)}</strong>
@@ -1109,7 +1194,7 @@ const LoansManagement = () => {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pick</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loan</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Loans</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Next Month</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Installment</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Charge</th>
@@ -1117,41 +1202,99 @@ const LoansManagement = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {bulkPayableLoans.map((item) => (
-                <tr key={item.loan.$id}>
+              {bulkPayableGroups.map((group) => (
+                <tr key={group.memberId}>
                   <td className="px-4 py-3 text-sm text-gray-900">
                     <input
                       type="checkbox"
-                      checked={Boolean(bulkRepaymentSelection[item.loan.$id])}
-                      onChange={(e) => toggleBulkLoanSelection(item.loan.$id, e.target.checked)}
+                      checked={Boolean(bulkRepaymentSelection[group.memberId])}
+                      onChange={(e) => toggleBulkLoanSelection(group.memberId, e.target.checked)}
                     />
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    <div className="font-medium">{item.memberName}</div>
-                    <div className="text-xs text-gray-500">{item.memberId}</div>
+                    <div className="font-medium">{group.memberName}</div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    <div>{formatCurrency(item.loan.amount)}</div>
-                    <div className="text-xs text-gray-500">ID: {item.loan.$id.slice(0, 8)}</div>
+                    <div>{group.loanCount} loan{group.loanCount === 1 ? '' : 's'}</div>
+                    <div className="text-xs text-gray-500">{formatCurrency(group.loanAmount)}</div>
                   </td>
                   <td className="px-4 py-3 text-sm text-center text-gray-900">
-                    {item.nextInstallment.month}
+                    {group.nextMonth}
                   </td>
                   <td className="px-4 py-3 text-sm text-right text-gray-900">
-                    {formatCurrency(item.nextInstallment.payment)}
+                    {formatCurrency(group.installment)}
                   </td>
                   <td className="px-4 py-3 text-sm text-right text-gray-900">
-                    {formatCurrency(item.nextInstallment.bankCharge)}
+                    {formatCurrency(group.charge)}
                   </td>
                   <td className="px-4 py-3 text-sm text-right font-semibold text-blue-700">
-                    {formatCurrency(item.nextInstallment.totalAmount)}
+                    {formatCurrency(group.totalAmount)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {bulkPayableLoans.length === 0 && (
+          {bulkPayableGroups.length === 0 && (
             <div className="text-sm text-gray-500 py-4">No active loans with unpaid installments found.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="card mb-6">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Payments by Date</h3>
+            <p className="text-sm text-gray-600">
+              Loan repayments recorded on the selected date.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date</label>
+            <input
+              type="date"
+              value={paymentSummaryDate}
+              onChange={(e) => setPaymentSummaryDate(e.target.value)}
+              className="form-input w-44"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-sm mb-3">
+          <span className="text-gray-700">
+            Repayments: <strong>{repaymentEntriesForDate.length}</strong>
+          </span>
+          <span className="text-gray-700">
+            Total paid: <strong>{formatCurrency(repaymentSummaryTotal)}</strong>
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Repayments</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Paid</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {repaymentSummaryRows.map((row) => (
+                <tr key={row.memberId}>
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    <div className="font-medium">{row.memberName}</div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-center text-gray-900">
+                    {row.repaymentsCount}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                    {formatCurrency(row.totalPaid)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {repaymentSummaryRows.length === 0 && (
+            <div className="text-sm text-gray-500 py-4">No repayments recorded for this date.</div>
           )}
         </div>
       </div>

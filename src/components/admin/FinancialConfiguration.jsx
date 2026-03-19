@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID } from '../../lib/appwrite';
-import { ID, Query } from 'appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, DOCUMENTS_BUCKET_ID, BRANDING_BUCKET_ID } from '../../lib/appwrite';
+import { ID, Query, Permission, Role } from 'appwrite';
 import { DEFAULT_FINANCIAL_CONFIG, fetchFinancialConfig } from '../../lib/financialConfig';
 
 const INTEGER_CONFIG_FIELDS = new Set([
@@ -50,7 +50,7 @@ const FinancialConfiguration = () => {
         setConfig({ ...DEFAULT_FINANCIAL_CONFIG, ...configDoc });
         setConfigId(configDoc.$id || null);
         if (configDoc.logoFileId) {
-          const bucketId = configDoc.logoBucketId || DOCUMENTS_BUCKET_ID;
+          const bucketId = configDoc.logoBucketId || BRANDING_BUCKET_ID || DOCUMENTS_BUCKET_ID;
           setLogoPreviewUrl(storage.getFilePreview(bucketId, configDoc.logoFileId));
         }
         await Promise.all([loadInterestRecords(), loadRetainedRecords()]);
@@ -71,9 +71,15 @@ const FinancialConfiguration = () => {
 
     try {
       setLogoUploading(true);
-      const uploaded = await storage.createFile(DOCUMENTS_BUCKET_ID, ID.unique(), file);
+      const targetBucket = BRANDING_BUCKET_ID || DOCUMENTS_BUCKET_ID;
+      const uploaded = await storage.createFile(
+        targetBucket,
+        ID.unique(),
+        file,
+        [Permission.read(Role.any())]
+      );
       const nextLogoFileId = uploaded.$id;
-      const nextLogoBucketId = DOCUMENTS_BUCKET_ID;
+      const nextLogoBucketId = targetBucket;
 
       if (config.logoFileId && config.logoBucketId) {
         try {
