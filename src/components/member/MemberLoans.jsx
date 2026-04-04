@@ -835,24 +835,16 @@ const MemberLoans = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Loan Type
                 </label>
-                <select
-                  {...register('loanType', {
-                    required: 'Loan type is required',
-                    onChange: (e) => {
-                      if (e.target.value === LOAN_TYPES.SHORT_TERM) {
-                        setGuarantorEntries([emptyGuarantorEntry()]);
-                      }
-                    }
-                  })}
-                  className="form-input"
-                >
-                  <option value={LOAN_TYPES.SHORT_TERM}>Short-Term Loan</option>
-                  <option value={LOAN_TYPES.LONG_TERM}>Long-Term Loan</option>
-                </select>
+                <div className="form-input bg-gray-50 text-gray-900 flex items-center">
+                  Short-Term Loan
+                </div>
+                <input
+                  type="hidden"
+                  value={LOAN_TYPES.SHORT_TERM}
+                  {...register('loanType')}
+                />
                 <p className="mt-1 text-xs text-gray-500">
-                  {isLongTermSelected
-                    ? `Long-term settings: ${activeMonthlyInterestPercent}% monthly interest (${activeInterestCalculationMode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE ? 'reducing balance' : 'flat principal'}), up to ${activeMaxDuration} months.`
-                    : `Short-term settings: ${activeMonthlyInterestPercent}% monthly interest (${activeInterestCalculationMode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE ? 'reducing balance' : 'flat principal'}), up to ${activeMaxDuration} months.`}
+                  {`Short-term settings: ${activeMonthlyInterestPercent}% monthly interest (${activeInterestCalculationMode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE ? 'reducing balance' : 'flat principal'}), up to ${activeMaxDuration} months.`}
                 </p>
               </div>
 
@@ -935,6 +927,7 @@ const MemberLoans = () => {
               </div>
             </div>
 
+            {/*
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Purpose of Loan
@@ -946,6 +939,7 @@ const MemberLoans = () => {
                 placeholder="Describe the purpose of this loan"
               />
             </div>
+            */}
 
             {/*
             <div>
@@ -1128,7 +1122,7 @@ const MemberLoans = () => {
                 </p>
                 <p><strong>Processing fees:</strong> Actual transfer charges are added to the first installment only.</p>
                 <p><strong>Early settlement:</strong> Principal + one month interest + admin fee (as configured).</p>
-                <p><strong>Guarantor rule:</strong> For long-term loans above borrower coverage, guarantor commitments must cover the gap before final approval.</p>
+                {/* <p><strong>Guarantor rule:</strong> For long-term loans above borrower coverage, guarantor commitments must cover the gap before final approval.</p> */}
                 <p><strong>Repayment:</strong> Monthly deductions start from the first scheduled payment date.</p>
               </div>
               <label className="mt-3 flex items-start">
@@ -1152,7 +1146,7 @@ const MemberLoans = () => {
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h4 className="text-sm font-medium text-gray-900 mb-2">Repayment Preview</h4>
                 <div className="text-sm text-gray-600 space-y-1">
-                  <div>Loan Type: {isLongTermSelected ? 'Long-Term' : 'Short-Term'}</div>
+                  <div>Loan Type: Short-Term</div>
                   <div>Principal: {formatCurrency(parsedWatchedAmount)}</div>
                   <div>Interest Basis: {getApplicationInterestBasisLabel()}</div>
                   {activeInterestCalculationMode === INTEREST_CALCULATION_MODES.REDUCING_BALANCE ? (
@@ -1239,9 +1233,11 @@ const MemberLoans = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Amount
                   </th>
+                  {/*
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Type
                   </th>
+                  */}
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Duration
                   </th>
@@ -1270,9 +1266,11 @@ const MemberLoans = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {formatCurrency(loan.amount)}
                       </td>
+                      {/*
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
                         {loan.loanType === LOAN_TYPES.LONG_TERM ? 'Long-Term' : 'Short-Term'}
                       </td>
+                      */}
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
                         {loan.duration} month{loan.duration > 1 ? 's' : ''}
                       </td>
@@ -1287,6 +1285,7 @@ const MemberLoans = () => {
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadgeClass(loan.status)}`}>
                             {loan.status}
                           </span>
+                          {/*
                           {loan.loanType === LOAN_TYPES.LONG_TERM && loan.guarantorRequired ? (
                             <div className="text-[11px] text-gray-500">
                               Coverage: {(() => {
@@ -1295,6 +1294,7 @@ const MemberLoans = () => {
                               })()}
                             </div>
                           ) : null}
+                          */}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
@@ -1338,12 +1338,14 @@ const MemberLoans = () => {
                     <label className="block text-sm font-medium text-gray-500">Amount</label>
                     <p className="text-sm text-gray-900">{formatCurrency(selectedLoan.amount)}</p>
                   </div>
+                  {/*
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Type</label>
                     <p className="text-sm text-gray-900">
                       {selectedLoan.loanType === LOAN_TYPES.LONG_TERM ? 'Long-Term' : 'Short-Term'}
                     </p>
                   </div>
+                  */}
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Duration</label>
                     <p className="text-sm text-gray-900">{selectedLoan.duration} months</p>
@@ -1398,6 +1400,7 @@ const MemberLoans = () => {
                   <p className="text-sm text-gray-900">{selectedLoan.purpose || 'No purpose specified'}</p>
                 </div>
 
+                {/*
                 {selectedLoan.loanType === LOAN_TYPES.LONG_TERM && selectedLoan.guarantorRequired ? (
                   (() => {
                     const summary = getLoanGuarantorSummary(selectedLoan);
@@ -1498,6 +1501,7 @@ const MemberLoans = () => {
                     );
                   })()
                 ) : null}
+                */}
                 
                 {/* Bank Charges */}
                 {loanCharges.find(charge => normalizeLoanId(charge.loanId) === normalizeLoanId(selectedLoan.$id)) && (
@@ -1695,4 +1699,3 @@ const MemberLoans = () => {
 };
 
 export default MemberLoans;
-

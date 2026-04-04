@@ -527,7 +527,7 @@ const MemberOverview = () => {
                       Borrower: {request.borrowerName}
                     </div>
                     <div className="text-xs text-slate-600">
-                      Loan: {formatCurrency(request.loanAmount)} | Type: {request.loanType === 'long_term' ? 'Long-Term' : 'Short-Term'} | Term: {request.selectedMonths || '-'} months
+                      Loan: {formatCurrency(request.loanAmount)} | Term: {request.selectedMonths || '-'} months
                     </div>
                     <div className="text-xs text-slate-600">
                       Your guarantee:{' '}

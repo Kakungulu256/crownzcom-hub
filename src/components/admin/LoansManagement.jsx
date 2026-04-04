@@ -51,7 +51,8 @@ const LoansManagement = () => {
     balance: '',
     status: '',
     loanType: 'short_term',
-    duration: ''
+    duration: '',
+    interestCalculationModeApplied: ''
   });
   
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
@@ -157,7 +158,8 @@ const LoansManagement = () => {
       balance: loan.balance ?? loan.amount ?? '',
       status: loan.status || '',
       loanType: loan.loanType || 'short_term',
-      duration: loan.selectedMonths ?? loan.duration ?? ''
+      duration: loan.selectedMonths ?? loan.duration ?? '',
+      interestCalculationModeApplied: getLoanInterestCalculationMode(loan)
     });
     setShowEditLoanModal(true);
   };
@@ -173,7 +175,8 @@ const LoansManagement = () => {
           balance: parseInt(editLoanForm.balance, 10) || 0,
           status: editLoanForm.status,
           loanType: editLoanForm.loanType,
-          duration: parseInt(editLoanForm.duration, 10) || 0
+          duration: parseInt(editLoanForm.duration, 10) || 0,
+          interestCalculationModeApplied: editLoanForm.interestCalculationModeApplied
         }
       });
       toast.success('Loan updated successfully');
@@ -1110,7 +1113,7 @@ const LoansManagement = () => {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900">
                         <div className="font-medium">{loan ? formatCurrency(loan.amount) : 'Loan'}</div>
-                        <div className="text-xs text-gray-500">{loan?.loanType || '-'}</div>
+                        {/* <div className="text-xs text-gray-500">{loan?.loanType || '-'}</div> */}
                       </td>
                       <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
                         {formatCurrency(requestedAmount)}
@@ -1943,6 +1946,7 @@ const LoansManagement = () => {
                   <option value="guarantor_coverage_failed">guarantor_coverage_failed</option>
                 </select>
               </div>
+              {/*
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Loan Type</label>
                 <select
@@ -1952,6 +1956,21 @@ const LoansManagement = () => {
                 >
                   <option value="short_term">short_term</option>
                   <option value="long_term">long_term</option>
+                </select>
+              </div>
+              */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Interest Calculation Mode</label>
+                <select
+                  value={editLoanForm.interestCalculationModeApplied}
+                  onChange={(e) => setEditLoanForm((prev) => ({
+                    ...prev,
+                    interestCalculationModeApplied: e.target.value
+                  }))}
+                  className="form-input"
+                >
+                  <option value={INTEREST_CALCULATION_MODES.FLAT}>Flat (on original principal)</option>
+                  <option value={INTEREST_CALCULATION_MODES.REDUCING_BALANCE}>Reducing Balance (on outstanding)</option>
                 </select>
               </div>
               <div>

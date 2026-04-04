@@ -1700,6 +1700,140 @@ const ReportsManagement = () => {
         ]
       : [['No monthly activity found in range', '', '', '', '', '', '', '']];
 
+    const projectionBaselineDate = toDate('2026-02-28T23:59:59.999Z');
+    const projectionStartMonth = '2026-03';
+    const projectionEndMonth = '2026-12';
+    const projectionMonthlyRate = 0.01;
+    const projectionScenarios = [
+      { label: 'Min Savings (UGX 510,000/month)', savings: 510000 },
+      { label: 'Max Savings (UGX 645,000/month)', savings: 645000 }
+    ];
+
+    const addMonths = (monthKey, delta) => {
+      if (!monthKey) return null;
+      const [yearStr, monthStr] = monthKey.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10) - 1;
+      if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+      const date = new Date(Date.UTC(year, month, 1));
+      date.setUTCMonth(date.getUTCMonth() + delta);
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    };
+
+    const buildMonthRange = (startMonth, endMonth) => {
+      const months = [];
+      let current = startMonth;
+      while (current && current <= endMonth) {
+        months.push(current);
+        current = addMonths(current, 1);
+      }
+      return months;
+    };
+
+    const getAnchorMonth = (loan, loanRepayments) => {
+      if (loanRepayments.length > 0) {
+        const counts = new Map();
+        loanRepayments.forEach((repayment) => {
+          const paidAt = repayment.paidAt || repayment.createdAt || repayment.$createdAt;
+          const paidMonth = toMonthKey(paidAt);
+          const monthNumber = parseInt(repayment.month, 10) || 1;
+          if (!paidMonth) return;
+          const anchor = addMonths(paidMonth, -(monthNumber - 1));
+          if (!anchor) return;
+          counts.set(anchor, (counts.get(anchor) || 0) + 1);
+        });
+        if (counts.size > 0) {
+          const sorted = Array.from(counts.entries()).sort((a, b) => {
+            if (b[1] !== a[1]) return b[1] - a[1];
+            return a[0].localeCompare(b[0]);
+          });
+          return sorted[0][0];
+        }
+      }
+
+      const createdMonth = toMonthKey(loan.createdAt || loan.$createdAt);
+      return createdMonth ? addMonths(createdMonth, 1) : projectionStartMonth;
+    };
+
+    const unitTrustAsOfBaseline = reportData.unitTrust.filter((record) => {
+      const recordDate = record.date || record.createdAt || record.$createdAt;
+      const parsed = toDate(recordDate);
+      if (!parsed || !projectionBaselineDate) return false;
+      return parsed <= projectionBaselineDate;
+    });
+    const unitTrustTotalsAsOf = sumUnitTrustByType(unitTrustAsOfBaseline);
+    const projectionOpeningTrustBalance =
+      unitTrustTotalsAsOf.purchase + unitTrustTotalsAsOf.interest - unitTrustTotalsAsOf.withdrawal;
+    const projectionTrustInterestEarned = unitTrustTotalsAsOf.interest;
+
+    const scheduledRepaymentsByMonth = {};
+    const activeProjectionLoans = reportData.loans.filter((loan) => ['active', 'approved'].includes(loan.status));
+    activeProjectionLoans.forEach((loan) => {
+      const schedule = parseRepaymentPlan(loan);
+      if (!schedule.length) return;
+      const loanRepayments = reportData.loanRepayments.filter(
+        (repayment) => normalizeLoanId(repayment.loanId) === loan.$id
+      );
+      const anchorMonth = getAnchorMonth(loan, loanRepayments);
+      if (!anchorMonth) return;
+      schedule.forEach((item) => {
+        const monthNumber = parseInt(item.month, 10);
+        if (!Number.isFinite(monthNumber)) return;
+        const dueMonth = addMonths(anchorMonth, monthNumber - 1);
+        if (!dueMonth) return;
+        const payment = parseInt(item.payment ?? item.amount, 10) || 0;
+        if (!payment) return;
+        scheduledRepaymentsByMonth[dueMonth] = (scheduledRepaymentsByMonth[dueMonth] || 0) + payment;
+      });
+    });
+
+    const projectionMonths = buildMonthRange(projectionStartMonth, projectionEndMonth);
+    const buildProjectionRows = (savingsAmount) => {
+      let balance = projectionOpeningTrustBalance;
+      let totalInterest = 0;
+      const rows = projectionMonths.map((monthKey) => {
+        const loanRepayments = scheduledRepaymentsByMonth[monthKey] || 0;
+        const inflow = loanRepayments + savingsAmount;
+        const interest = (balance + inflow) * projectionMonthlyRate;
+        const closing = balance + inflow + interest;
+        totalInterest += interest;
+        balance = closing;
+        return {
+          monthKey,
+          loanRepayments,
+          savings: savingsAmount,
+          inflow,
+          interest,
+          closing
+        };
+      });
+      return { rows, totalInterest, closingBalance: balance };
+    };
+
+    const projectionTables = projectionScenarios.map((scenario) => {
+      const data = buildProjectionRows(scenario.savings);
+      const rows = data.rows.map((row) => ([
+        formatMonthLabel(row.monthKey),
+        formatAgmAmount(row.loanRepayments),
+        formatAgmAmount(row.savings),
+        formatAgmAmount(row.inflow),
+        formatAgmAmount(row.interest),
+        formatAgmAmount(row.closing)
+      ]));
+      rows.push([
+        'Total',
+        '',
+        '',
+        '',
+        formatAgmAmount(data.totalInterest),
+        formatAgmAmount(data.closingBalance)
+      ]);
+      return {
+        label: scenario.label,
+        rows
+      };
+    });
+
     const meta = [
       `Generated: ${new Date().toLocaleString()}`,
       `Total Members: ${reportData.members.length}`,
@@ -1735,6 +1869,25 @@ const ReportsManagement = () => {
       { label: 'Total Withdrawals from Trust', value: formatAgmAmount(unitTrustRangeTotals.withdrawal) },
       { label: 'Closing Trust Balance', value: formatAgmAmount(closingTrustBalance) }
     ], pdfMeta);
+
+    cursorY += SECTION_GAP;
+    cursorY = addSectionTitle(doc, cursorY, 'Trust Interest Projection (Mar-Dec 2026)', pdfMeta);
+    cursorY = addKeyValueRows(doc, cursorY, [
+      { label: 'Opening Trust Balance (As of Feb 28th 2026)', value: formatAgmAmount(projectionOpeningTrustBalance) },
+      { label: 'Trust Interest Earned (As of Feb 28th 2026)', value: formatAgmAmount(projectionTrustInterestEarned) },
+      { label: 'Monthly Trust Interest Rate', value: '1%' }
+    ], pdfMeta);
+
+    projectionTables.forEach((table) => {
+      cursorY += 2;
+      cursorY = addSimpleTable(
+        doc,
+        cursorY,
+        ['Month', 'Loan Repayments', 'Savings', 'Total Inflow', 'Interest', 'Closing Balance'],
+        table.rows,
+        { ...pdfMeta, tableTitle: `Scenario: ${table.label}` }
+      );
+    });
 
     cursorY += SECTION_GAP;
     cursorY = addSectionTitle(doc, cursorY, 'Loan Portfolio Summary', pdfMeta);

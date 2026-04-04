@@ -383,6 +383,7 @@ const FinancialConfiguration = () => {
               <p className="text-xs text-gray-500 mt-1">Current: {config.loanInterestRate}% per month</p>
             </div>
 
+            {/*
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Long-Term Monthly Interest Rate (%)
@@ -396,6 +397,7 @@ const FinancialConfiguration = () => {
               />
               <p className="text-xs text-gray-500 mt-1">Current: {config.longTermInterestRate}% per month</p>
             </div>
+            */}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -465,6 +467,7 @@ const FinancialConfiguration = () => {
               </p>
             </div>
 
+            {/*
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Long-Term Maximum Repayment (months)
@@ -481,6 +484,7 @@ const FinancialConfiguration = () => {
                 Maximum long-term loan term: {config.longTermMaxRepaymentMonths} months
               </p>
             </div>
+            */}
           </div>
         </div>
 
@@ -543,14 +547,12 @@ const FinancialConfiguration = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div>
             <p><strong>Short-Term Interest:</strong> {config.loanInterestRate}%</p>
-            <p><strong>Long-Term Interest:</strong> {config.longTermInterestRate}%</p>
             <p><strong>Interest Mode:</strong> {config.interestCalculationMode === 'reducing_balance' ? 'Reducing Balance' : 'Flat'}</p>
             <p><strong>Loan Eligibility:</strong> {config.loanEligibilityPercentage}% of savings</p>
             <p><strong>Early Repayment Penalty:</strong> {config.earlyRepaymentPenalty}%</p>
           </div>
           <div>
             <p><strong>Short-Term Max Duration:</strong> {config.maxLoanDuration} months</p>
-            <p><strong>Long-Term Max Duration:</strong> {config.longTermMaxRepaymentMonths} months</p>
             <p><strong>Loan Range:</strong> UGX {config.minLoanAmount.toLocaleString()} - {config.maxLoanAmount.toLocaleString()}</p>
             <p><strong>Default Bank Charge:</strong> UGX {config.defaultBankCharge.toLocaleString()}</p>
           </div>

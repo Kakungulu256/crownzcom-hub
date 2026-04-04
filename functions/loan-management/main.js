@@ -835,8 +835,11 @@ async function updateLoanDetails(loanId, updates = {}) {
     throw new Error('Loan duration must be greater than zero.');
   }
 
+  const requestedMode = updates.interestCalculationModeApplied;
   const mode = normalizeInterestCalculationMode(
-    loan.interestCalculationModeApplied || config.interestCalculationMode
+    (requestedMode !== undefined && requestedMode !== null && String(requestedMode).trim() !== '')
+      ? requestedMode
+      : (loan.interestCalculationModeApplied || config.interestCalculationMode)
   );
   const monthlyRatePercent = Number.isFinite(toFloat(loan.monthlyInterestRateApplied, NaN))
     ? toFloat(loan.monthlyInterestRateApplied, 0)
