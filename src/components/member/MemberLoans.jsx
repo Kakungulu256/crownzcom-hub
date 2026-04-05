@@ -577,6 +577,36 @@ const MemberLoans = () => {
     }
   };
 
+  const getLoanRepaymentMonthStatus = (loan, scheduleOverride) => {
+    const schedule = Array.isArray(scheduleOverride)
+      ? scheduleOverride
+      : (parseJsonSafely(loan?.repaymentPlan) || []);
+    const scheduleMonths = schedule
+      .map((item) => parseInt(item?.month, 10))
+      .filter((month) => Number.isFinite(month));
+    const paidSet = new Set(
+      loanRepayments
+        .filter((repayment) => normalizeLoanId(repayment.loanId) === normalizeLoanId(loan?.$id))
+        .map((repayment) => parseInt(repayment.month, 10))
+        .filter((month) => Number.isFinite(month))
+    );
+    const paidMonths = scheduleMonths.filter((month) => paidSet.has(month));
+    const pendingMonths = scheduleMonths.filter((month) => !paidSet.has(month));
+
+    return {
+      paidSet,
+      paidMonths,
+      pendingMonths,
+      totalMonths: scheduleMonths.length
+    };
+  };
+
+  const formatMonthList = (months, limit = 8) => {
+    if (!months || months.length === 0) return 'None';
+    if (months.length <= limit) return months.join(', ');
+    return `${months.slice(0, limit).join(', ')} +${months.length - limit} more`;
+  };
+
   const normalizeInterestCalculationMode = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized === INTEREST_CALCULATION_MODES.REDUCING_BALANCE
@@ -1643,41 +1673,92 @@ const MemberLoans = () => {
                         </p>
                       ) : null;
                     })()}
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Payment</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Principal</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Interest</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {JSON.parse(selectedLoan.repaymentPlan).map((payment, index) => {
-                            const bankCharges = index === 0 ? getLoanChargeTotal(selectedLoan.$id) : 0;
-                            
-                            return (
-                              <tr key={index} className={index === 0 && bankCharges > 0 ? 'bg-yellow-50' : ''}>
-                                <td className="px-3 py-2 text-sm text-gray-900">{payment.month}</td>
-                                <td className="px-3 py-2 text-sm text-gray-900 text-right">
-                                  {formatCurrency(payment.payment + bankCharges)}
-                                  {bankCharges > 0 && (
-                                    <div className="text-xs text-yellow-600">
-                                      (includes {formatCurrency(bankCharges)} charges)
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.principal)}</td>
-                                <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.interest)}</td>
-                                <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.balance)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    {(() => {
+                      const schedule = parseJsonSafely(selectedLoan.repaymentPlan);
+                      if (!Array.isArray(schedule) || schedule.length === 0) {
+                        return (
+                          <div className="text-sm text-gray-500">
+                            No repayment schedule found for this loan.
+                          </div>
+                        );
+                      }
+                      const {
+                        paidSet,
+                        paidMonths,
+                        pendingMonths,
+                        totalMonths
+                      } = getLoanRepaymentMonthStatus(selectedLoan, schedule);
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-2">
+                            <span className="inline-flex items-center gap-2">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              Paid months:{' '}
+                              <span className="font-medium text-gray-700">{paidMonths.length}</span>
+                            </span>
+                            <span className="inline-flex items-center gap-2">
+                              <span className="h-2 w-2 rounded-full bg-amber-500" />
+                              Pending months:{' '}
+                              <span className="font-medium text-gray-700">{pendingMonths.length}</span>
+                            </span>
+                            <span className="text-gray-400">of {totalMonths}</span>
+                          </div>
+                          <div className="text-xs text-gray-500 mb-3">
+                            <span className="font-medium text-emerald-700">Paid:</span>{' '}
+                            {formatMonthList(paidMonths)}
+                            <span className="ml-3 font-medium text-amber-700">Pending:</span>{' '}
+                            {formatMonthList(pendingMonths)}
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Payment</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Principal</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Interest</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
+                                  <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="bg-white divide-y divide-gray-200">
+                                {schedule.map((payment, index) => {
+                                  const bankCharges = index === 0 ? getLoanChargeTotal(selectedLoan.$id) : 0;
+                                  const monthNumber = parseInt(payment?.month, 10);
+                                  const isPaid = Number.isFinite(monthNumber) && paidSet.has(monthNumber);
+                                  
+                                  return (
+                                    <tr key={index} className={index === 0 && bankCharges > 0 ? 'bg-yellow-50' : ''}>
+                                      <td className="px-3 py-2 text-sm text-gray-900">{payment.month}</td>
+                                      <td className="px-3 py-2 text-sm text-gray-900 text-right">
+                                        {formatCurrency(payment.payment + bankCharges)}
+                                        {bankCharges > 0 && (
+                                          <div className="text-xs text-yellow-600">
+                                            (includes {formatCurrency(bankCharges)} charges)
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.principal)}</td>
+                                      <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.interest)}</td>
+                                      <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatCurrency(payment.balance)}</td>
+                                      <td className="px-3 py-2 text-center">
+                                        <span
+                                          className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                            isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                          }`}
+                                        >
+                                          {isPaid ? 'Paid' : 'Pending'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
